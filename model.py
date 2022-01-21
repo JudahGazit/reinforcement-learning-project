@@ -10,8 +10,9 @@ import copy
 
 import numpy as np
 import scipy.special
-from keras.layers import Dense, Input, BatchNormalization, Dropout
+from keras.layers import Dense, Input, BatchNormalization, Dropout, Concatenate
 from keras.models import Sequential
+from keras.regularizers import l2
 
 import matplotlib.pyplot as plt
 import shelve
@@ -44,17 +45,17 @@ class Model:
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
-        self.parallel_envs = 32
+        self.parallel_envs = 1
         self.action_step_size = action_step_size
         self.copy_to_target_at = 500
         self.minimum_states = 5000
         self.batch_frames = batch_frames
-        self.batch_size = 32
-        self.gamma = 0.95
-        self.epsilon = 0.3
-        self.epsilon_min = 0.05
-        self.epsilon_decay = 0.995
-        self.learning_rate = 0.01
+        self.batch_size = 64
+        self.gamma = 0.99
+        self.epsilon = 0.5
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.99
+        self.learning_rate = 0.001
 
         self.action_space = self.__make_action_space()
 
@@ -71,10 +72,10 @@ class Model:
     def __make_action_space(self):
         number_of_axes = self.env.action_space.shape[0]
         # actions = (np.linspace(-1, 1, self.action_step_size) * np.eye(number_of_axes)[:, :, None]).reshape(number_of_axes, -1, ).transpose()
-        actions = itertools.product(*[(-1, 0, 1) for _ in range(number_of_axes)])
+        actions = itertools.product(*[(-1, 0.5, 0, 0.5, 1) for _ in range(number_of_axes)])
         actions = np.array(list(actions))
         # actions = actions[((actions == 0).sum(1) >= 2) & ((actions == 0).sum(1) < number_of_axes)]
-        actions = actions[((actions != 0).sum(1) <= 2)]
+        actions = actions[((actions != 0).sum(1) <= 1) & ((actions != 0).sum(1) > 0)]
         # actions = np.concatenate([actions, np.zeros((1, number_of_axes))])
         print('Number of actions', len(actions))
         return actions
@@ -84,10 +85,11 @@ class Model:
         number_of_features = self.env.observation_space.shape[0] * self.batch_frames
         print('Number of features', number_of_features)
         model.add(Input(number_of_features))
-        for _ in range(2):
-            model.add(Dense(512, activation="relu"))
+        for _ in range(3):
+            model.add(Dense(256))
+            # model.add(Dropout(0.2))
         model.add(Dense(len(self.action_space)))
-        model.compile(loss="mean_squared_error", optimizer=keras.optimizer_v2.adam.Adam(clipnorm=5, learning_rate=self.learning_rate))
+        model.compile(loss="mean_squared_error", optimizer=keras.optimizer_v2.adam.Adam(learning_rate=self.learning_rate))
         return model
 
     def copy_to_target(self):
@@ -116,11 +118,17 @@ class Model:
     def learn_over_replay(self):
         if len(self.replay_memory) >= self.minimum_states:
             samples = np.array(self.replay_memory.sample(self.batch_size))
+            rewards = samples[:, 2]
+            is_done = samples[:, 4]
             state = (np.vstack(samples[:, 0]) - self.replay_memory.mean) / self.replay_memory.std
+            action = samples[:, 1].astype(int)
             next_state = (np.vstack(samples[:, 3]) - self.replay_memory.mean) / self.replay_memory.std
-            targets = self.model.predict(state)
-            Q_future = self.target_model.predict(next_state).max(1)
-            targets[np.arange(len(targets)), samples[:, 1].astype(int)] = samples[:, 2] + (1 - samples[:, 4]) * Q_future * self.gamma
+
+            targets = self.model.predict(state, batch_size=len(state))
+            next_action = self.model.predict(next_state, batch_size=len(state)).argmax(1)
+            Q_future = self.target_model.predict(next_state, batch_size=len(state))[np.arange(len(targets)), next_action]
+            targets[np.arange(len(targets)), action] = rewards + (1 - is_done) * Q_future * self.gamma
+
             loss = self.model.fit(state, targets, epochs=1, verbose=False, batch_size=self.batch_size, shuffle=False)
             return loss.history['loss'][0]
         else:
@@ -128,15 +136,17 @@ class Model:
             self.replay_memory.std = np.array(self.replay_memory.buffer[:self.replay_memory.size])[:, 0].std(0)
         return 0
 
-    def train(self, episodes=500, episode_length=200):
+    def train(self, episodes=1000, episode_length=700):
         envs = [gym.make(self.env_name) for _ in range(self.parallel_envs)]
         losses = []
+        total_rewards = []
         for trial in range(episodes):
             cur_states = np.array([env.reset() for env in envs])
             cur_states = np.hstack([cur_states for _ in range(self.batch_frames)])
             total_reward = 0
             losses_of_trial = []
             for step in range(episode_length):
+            # while True:
                 if len(cur_states) > 0:
                     actions = self.act(cur_states)
                     new_states = np.array([[env.step(self.action_space[action]) for _ in range(self.batch_frames)]
@@ -153,21 +163,27 @@ class Model:
                     # cur_states = np.delete(cur_states, np.where(new_states[:, :, 2].any(1))[0], axis=0)
                     if new_states[:, :, 2].any():
                         break
+            self.copy_to_target()
                 # for i in np.where(new_states[:, :, 2].any(1))[0]:
                 #     reset_game = envs[i].reset()
                 #     cur_states[i] = np.hstack([reset_game for _ in range(self.batch_frames)])
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-            if trial % (self.copy_to_target_at // self.parallel_envs) == 0:
-                self.copy_to_target()
+            # if trial % (self.copy_to_target_at // self.parallel_envs) == 0:
+            #     self.copy_to_target()
             losses.append(np.mean(losses_of_trial))
+            total_rewards.append(total_reward)
             print('Episode', str.zfill(str(trial), 4), '\t|\t',
                   'Reward', f'{total_reward:.4f}', '\t|\t',
                   'Queue', len(self.replay_memory), '\t|\t',
                   'Epsilon', f'{self.epsilon:.4f}', '\t|\t',
                   'Loss', f'{np.mean(losses_of_trial):.4f}', '\t|\t',
-                  'TargetUpdates', trial // (self.copy_to_target_at // self.parallel_envs), '\t|\t',
+                  # 'TargetUpdates', trial // (self.copy_to_target_at // self.parallel_envs), '\t|\t',
                   sep='\t')
-        plt.plot(range(episodes), losses, '-o')
+        plt.plot(range(episodes), losses, '-')
         plt.setp(plt.gca(), title='Losses per episode', xlabel='episode', ylabel='mean loss')
+        plt.show()
+
+        plt.plot(range(episodes), total_rewards, '-')
+        plt.setp(plt.gca(), title='Rewards per episode', xlabel='episode', ylabel='total reward')
         plt.show()
         return self

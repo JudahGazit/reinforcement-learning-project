@@ -1,4 +1,5 @@
 import gym
+import tensorflow as tf
 import matplotlib
 import matplotlib.animation as animation
 import pandas as pd
@@ -7,6 +8,11 @@ import numpy as np
 import imageio
 
 from model import Model
+
+
+tf.compat.v1.disable_v2_behavior()
+tf.compat.v1.disable_eager_execution()
+
 
 def play_by_model(env, model, batch_frames, file_name='game.gif'):
     state = env.reset()

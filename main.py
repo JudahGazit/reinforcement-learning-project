@@ -21,7 +21,8 @@ def play_by_model(env, model, batch_frames, file_name='game.gif'):
     actions = []
     rewards = []
     total_reward = 0
-    for i in range(500):
+    # for i in range(500):
+    while True:
         action = model.act(state.reshape(1, -1))[0]
         batch_states = np.array([env.step(model.action_space[action]) for _ in range(batch_frames)])
         state, reward, done, info = np.concatenate(batch_states[:, 0]), *batch_states[-1, 1:]

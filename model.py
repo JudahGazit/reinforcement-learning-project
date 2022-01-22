@@ -49,7 +49,7 @@ class Model:
         self.parallel_envs = 1
         self.action_step_size = action_step_size
         self.copy_to_target_at = 10
-        self.minimum_states = 64
+        self.minimum_states = 5000
         self.batch_frames = batch_frames
         self.batch_size = 64
         self.gamma = 0.99
@@ -145,19 +145,19 @@ class Model:
             total_reward = 0
             losses_of_trial = []
             for step in range(episode_length):
-            # while True:
                 if len(cur_states) > 0:
                     actions = self.act(cur_states)
-                    new_states = [[env.step(self.action_space[action]) for _ in range(self.batch_frames)] for env, action in zip(envs, actions)]
-                    rewards = [sum([s[1] for s in i]) for i in new_states]
-                    total_reward += np.mean(rewards)
+                    new_states = np.array([[env.step(self.action_space[action]) for _ in range(self.batch_frames)]
+                                           for env, action in zip(envs, actions)])
+                    rewards = np.maximum(new_states[:, :, 1], -10).sum(1)
+                    total_reward += rewards.mean()
                     for state, action, reward, new_state in zip(cur_states, actions, rewards, new_states):
-                        self.remember(state, action, reward, np.hstack([s[0] for s in new_state]), any([s[2] for s in new_state]))
+                        self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
                     loss = self.learn_over_replay()
                     losses_of_trial.append(loss)
 
-                    cur_states = np.array([np.hstack([s[0] for s in new_state]) for new_state in new_states])
-                    if any([s[2] for s in new_state for new_state in new_states]):
+                    cur_states = np.array(new_states[:, :, 0].tolist()).reshape(cur_states.shape)
+                    if new_states[:, :, 2].any():
                         break
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
             if trial % (self.copy_to_target_at // self.parallel_envs) == 0:

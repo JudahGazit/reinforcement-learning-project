@@ -1,26 +1,27 @@
 import copy
+import itertools
 import random
 import warnings
 
 import gym
 import keras.losses
 import keras.models
+import keras.optimizers
 import keras.optimizer_v2.adam
+import keras.optimizer_v2.rmsprop
 import numpy as np
 import tensorflow as tf
-from keras.layers import Dense, Input
+from keras.layers import Dense, Input, GaussianNoise, ReLU
 from mlflow import log_metric, log_param
 
 warnings.filterwarnings("ignore")
 
 class ReplayMemory:
-    def __init__(self, max_size, alpha=0):
+    def __init__(self, max_size):
         self.buffer = [None] * max_size
-        # self.td_errors = np.empty(max_size)
         self.max_size = max_size
         self.index = 0
         self.size = 0
-        self.alpha = alpha
         self.mean = 0
         self.std = 1
 
@@ -30,11 +31,10 @@ class ReplayMemory:
         self.index = (self.index + 1) % self.max_size
 
     def sample(self, batch_size):
-        indices = random.sample(range(self.size), batch_size)
-        return list(indices)
+        return random.sample(self.buffer[:self.size], batch_size)
 
     def update_mead_std(self):
-        states = np.array([s[0] for s in self.buffer[:self.size]])
+        states = np.array(self.buffer[:self.size])[:, 0]
         self.mean = np.mean(states, 0)
         self.std = np.std(states, 0)
 
@@ -42,21 +42,23 @@ class ReplayMemory:
         return self.size
 
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=5):
+    def __init__(self, env, batch_frames, action_step_size=3):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
         self.parallel_envs = 1
         self.action_step_size = action_step_size
         self.copy_to_target_at = 10
+        self.learn_every = 2
         self.minimum_states = 5000
         self.batch_frames = batch_frames
-        self.batch_size = 64
+        self.batch_size = 128
         self.gamma = 0.99
         self.epsilon = 1
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
-        self.learning_rate = 0.0005
+        self.learning_rate = 0.0001
+        self.learning_rate_decay = 1e-2
 
         for k, v in self.__dict__.items():
             if k != 'env':
@@ -72,8 +74,9 @@ class Model:
 
     def __make_action_space(self):
         number_of_axes = self.env.action_space.shape[0]
-        actions = np.transpose(np.reshape((np.linspace(-1, 1, self.action_step_size) * np.eye(number_of_axes)[:, :, None]), (number_of_axes, -1)))
-        actions = actions[(np.sum(actions != 0, 1) <= 2) & (np.sum(actions != 0, 1) > 0)]
+        actions = itertools.product(*[np.linspace(-1, 1, self.action_step_size) for _ in range(number_of_axes)])
+        actions = np.array(list(actions))
+        actions = actions[(np.sum(actions != 0, 1) <= 4) & (np.sum(actions != 0, 1) > 0)]
         print('Number of actions', len(actions))
         log_param('num_actions', len(actions))
         log_param('max_parallel_actions', np.max(np.sum(actions != 0, 1)))
@@ -84,14 +87,15 @@ class Model:
         print('Number of features', number_of_features)
         X_input = Input(number_of_features)
         X = X_input
-        X = Dense(256)(X)
-        X = Dense(256)(X)
-        X = Dense(256)(X)
+        for _ in range(3):
+            X = Dense(256, activation='relu')(X)
+        # X = GaussianNoise(0.001)(X)
         advantage = Dense(len(self.action_space))(X)
         value = Dense(1)(X)
         X = value + (advantage - tf.math.reduce_mean(advantage, axis=1, keepdims=True))
         model = keras.Model(inputs=X_input, outputs=X)
-        model.compile(loss="mean_squared_error", optimizer=keras.optimizer_v2.adam.Adam(learning_rate=self.learning_rate))
+        model.compile(loss="mean_squared_error",
+                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate))
         return model
 
     def copy_to_target(self):
@@ -119,8 +123,7 @@ class Model:
 
     def learn_over_replay(self):
         if len(self.replay_memory) >= self.minimum_states:
-            sample_indices = np.array(self.replay_memory.sample(self.batch_size))
-            samples = np.array([self.replay_memory.buffer[i] for i in sample_indices])
+            samples = np.array(self.replay_memory.sample(self.batch_size))
             rewards = samples[:, 2]
             is_done = samples[:, 4]
             state = (np.vstack(samples[:, 0]) - self.replay_memory.mean) / self.replay_memory.std
@@ -135,7 +138,7 @@ class Model:
             self.replay_memory.update_mead_std()
         return 0
 
-    def train(self, episodes=1000, episode_length=1500):
+    def train(self, episodes=1000, episode_length=2000):
         envs = [gym.make(self.env_name).env for _ in range(self.parallel_envs)]
         losses = []
         total_rewards = []
@@ -153,8 +156,9 @@ class Model:
                     total_reward += rewards.mean()
                     for state, action, reward, new_state in zip(cur_states, actions, rewards, new_states):
                         self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
-                    loss = self.learn_over_replay()
-                    losses_of_trial.append(loss)
+                    if step % self.learn_every == 0:
+                        loss = self.learn_over_replay()
+                        losses_of_trial.append(loss)
 
                     cur_states = np.array(new_states[:, :, 0].tolist()).reshape(cur_states.shape)
                     if new_states[:, :, 2].any():
@@ -162,6 +166,7 @@ class Model:
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
             if trial % (self.copy_to_target_at // self.parallel_envs) == 0:
                 self.copy_to_target()
+                self.replay_memory.update_mead_std()
 
             losses.append(np.mean(losses_of_trial))
             total_rewards.append(total_reward)
@@ -176,4 +181,5 @@ class Model:
                   'Loss', f'{np.mean(losses_of_trial):.4f}', '\t|\t',
                   # 'TargetUpdates', trial // (self.copy_to_target_at // self.parallel_envs), '\t|\t',
                   sep='\t')
+        self.model.save('weights')
         return self

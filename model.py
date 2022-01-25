@@ -42,13 +42,13 @@ class ReplayMemory:
         return self.size
 
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=3):
+    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=10, learning_rate=0.0001):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
         self.parallel_envs = 1
         self.action_step_size = action_step_size
-        self.copy_to_target_at = 10
+        self.copy_to_target_at = 10 #copy_to_target_at
         self.learn_every = 2
         self.minimum_states = 5000
         self.batch_frames = batch_frames
@@ -57,8 +57,7 @@ class Model:
         self.epsilon = 1
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
-        self.learning_rate = 0.0001
-        self.learning_rate_decay = 1e-2
+        self.learning_rate = 0.00005478 #learning_rate
 
         for k, v in self.__dict__.items():
             if k != 'env':
@@ -86,9 +85,9 @@ class Model:
         print('Number of features', number_of_features)
         X_input = Input(number_of_features)
         X = X_input
-        for _ in range(3):
-            X = Dense(256, activation='relu')(X)
-        # X = GaussianNoise(0.001)(X)
+        X = Dense(512, activation='relu')(X)
+        X = Dense(512, activation='relu')(X)
+        X = Dense(256, activation='relu')(X)
         advantage = Dense(len(self.action_space))(X)
         value = Dense(1)(X)
         X = value + (advantage - tf.math.reduce_mean(advantage, axis=1, keepdims=True))
@@ -179,3 +178,4 @@ class Model:
                   sep='\t')
         self.model.save('weights')
         return self
+        # return np.mean(total_rewards[-10:])

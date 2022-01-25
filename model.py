@@ -77,7 +77,6 @@ class Model:
         actions = itertools.product(*[np.linspace(-1, 1, self.action_step_size) for _ in range(number_of_axes)])
         actions = np.array(list(actions))
         actions = actions[(np.sum(actions != 0, 1) <= 4) & (np.sum(actions != 0, 1) > 0)]
-        print('Number of actions', len(actions))
         log_param('num_actions', len(actions))
         log_param('max_parallel_actions', np.max(np.sum(actions != 0, 1)))
         return actions
@@ -94,8 +93,8 @@ class Model:
         value = Dense(1)(X)
         X = value + (advantage - tf.math.reduce_mean(advantage, axis=1, keepdims=True))
         model = keras.Model(inputs=X_input, outputs=X)
-        model.compile(loss="mean_squared_error",
-                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate))
+        model.compile(loss="huber_loss",
+                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, clipnorm=1))
         return model
 
     def copy_to_target(self):
@@ -124,14 +123,10 @@ class Model:
     def learn_over_replay(self):
         if len(self.replay_memory) >= self.minimum_states:
             samples = np.array(self.replay_memory.sample(self.batch_size))
-            rewards = samples[:, 2]
-            is_done = samples[:, 4]
-            state = (np.vstack(samples[:, 0]) - self.replay_memory.mean) / self.replay_memory.std
-            action = samples[:, 1].astype(int)
-            next_state = (np.vstack(samples[:, 3]) - self.replay_memory.mean) / self.replay_memory.std
-
-            targets = self.create_targets(state, action, rewards, next_state, is_done)
-
+            state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
+            state = (np.vstack(state) - self.replay_memory.mean) / self.replay_memory.std
+            next_state = (np.vstack(next_state) - self.replay_memory.mean) / self.replay_memory.std
+            targets = self.create_targets(state, action.astype(int), rewards, next_state, is_done)
             loss = self.model.fit(state, targets, epochs=1, verbose=False, batch_size=self.batch_size, shuffle=False)
             return loss.history['loss'][0]
         else:
@@ -143,26 +138,27 @@ class Model:
         losses = []
         total_rewards = []
         for trial in range(episodes):
-            cur_states = np.array([env.reset() for env in envs])
-            cur_states = np.hstack([cur_states for _ in range(self.batch_frames)])
+            if len(total_rewards) > 5 and np.mean(total_rewards[-5:]) > 300:
+                break
+            states = np.array([env.reset() for env in envs])
+            states = np.hstack([states for _ in range(self.batch_frames)])
             total_reward = 0
             losses_of_trial = []
             for step in range(episode_length):
-                if len(cur_states) > 0:
-                    actions = self.act(cur_states)
-                    new_states = np.array([[env.step(self.action_space[action]) for _ in range(self.batch_frames)]
-                                           for env, action in zip(envs, actions)])
-                    rewards = np.maximum(new_states[:, :, 1], -10).sum(1)
-                    total_reward += rewards.mean()
-                    for state, action, reward, new_state in zip(cur_states, actions, rewards, new_states):
-                        self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
-                    if step % self.learn_every == 0:
-                        loss = self.learn_over_replay()
-                        losses_of_trial.append(loss)
+                actions = self.act(states)
+                new_states = np.array([[env.step(self.action_space[action]) for _ in range(self.batch_frames)]
+                                       for env, action in zip(envs, actions)])
+                rewards = np.maximum(new_states[:, :, 1], -10).sum(1)
+                total_reward += rewards.mean()
+                for state, action, reward, new_state in zip(states, actions, rewards, new_states):
+                    self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
+                if step % self.learn_every == 0:
+                    loss = self.learn_over_replay()
+                    losses_of_trial.append(loss)
 
-                    cur_states = np.array(new_states[:, :, 0].tolist()).reshape(cur_states.shape)
-                    if new_states[:, :, 2].any():
-                        break
+                states = np.array(new_states[:, :, 0].tolist()).reshape(states.shape)
+                if new_states[:, :, 2].any():
+                    break
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
             if trial % (self.copy_to_target_at // self.parallel_envs) == 0:
                 self.copy_to_target()

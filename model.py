@@ -35,6 +35,7 @@ class ReplayMemory:
 
     def update_mead_std(self):
         states = np.array(self.buffer[:self.size])[:, 0]
+        rewards = np.array(self.buffer[:self.size])[:, 2]
         self.mean = np.mean(states, 0)
         self.std = np.std(states, 0)
 
@@ -49,6 +50,7 @@ class Model:
         self.parallel_envs = 1
         self.action_step_size = action_step_size
         self.copy_to_target_at = 10 #copy_to_target_at
+        # self.copy_to_target_at = 1000 #copy_to_target_at ## hardcore
         self.learn_every = 2
         self.minimum_states = 5000
         self.batch_frames = batch_frames
@@ -57,7 +59,8 @@ class Model:
         self.epsilon = 1
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
-        self.learning_rate = 0.00005478 #learning_rate
+        self.learning_rate = 0.00005478 #learning_rate ## Normal
+        # self.learning_rate = 0.000792 # learning_rate ## hardcore
 
         for k, v in self.__dict__.items():
             if k != 'env':
@@ -100,7 +103,9 @@ class Model:
         self.target_model.set_weights(copy.deepcopy(self.model.get_weights()))
 
     def remember(self, state, action, reward, new_state, done):
-        self.replay_memory.append([state, action, reward, new_state, done])
+        payload = [state, action, reward, new_state, done]
+        self.replay_memory.append(payload)
+        return payload
 
     def act(self, states, stochastic=True):
         greedy_actions = np.argmax(self.model.predict((states - self.replay_memory.mean) / self.replay_memory.std, batch_size=len(states)), 1)
@@ -119,9 +124,10 @@ class Model:
         targets[np.arange(len(targets)), action] = reward + (1 - done) * Q_future * self.gamma
         return targets
 
-    def learn_over_replay(self):
+    def learn_over_replay(self, stored):
         if len(self.replay_memory) >= self.minimum_states:
-            samples = np.array(self.replay_memory.sample(self.batch_size))
+            # samples = np.array(self.replay_memory.sample(self.batch_size))
+            samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
             state = (np.vstack(state) - self.replay_memory.mean) / self.replay_memory.std
             next_state = (np.vstack(next_state) - self.replay_memory.mean) / self.replay_memory.std
@@ -132,10 +138,11 @@ class Model:
             self.replay_memory.update_mead_std()
         return 0
 
-    def train(self, episodes=1000, episode_length=2000):
+    def train(self, episodes=3000, episode_length=2000):
         envs = [gym.make(self.env_name).env for _ in range(self.parallel_envs)]
         losses = []
         total_rewards = []
+        total_steps = 0
         for trial in range(episodes):
             if len(total_rewards) > 5 and np.mean(total_rewards[-5:]) > 300:
                 break
@@ -144,22 +151,27 @@ class Model:
             total_reward = 0
             losses_of_trial = []
             for step in range(episode_length):
+                total_steps += 1
                 actions = self.act(states)
                 new_states = np.array([[env.step(self.action_space[action]) for _ in range(self.batch_frames)]
                                        for env, action in zip(envs, actions)])
                 rewards = np.maximum(new_states[:, :, 1], -10).sum(1)
                 total_reward += rewards.mean()
                 for state, action, reward, new_state in zip(states, actions, rewards, new_states):
-                    self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
+                    stored = self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
                 if step % self.learn_every == 0:
-                    loss = self.learn_over_replay()
+                    loss = self.learn_over_replay(stored)
                     losses_of_trial.append(loss)
 
                 states = np.array(new_states[:, :, 0].tolist()).reshape(states.shape)
                 if new_states[:, :, 2].any():
                     break
+
+                # if total_steps % self.copy_to_target_at == 0:
+                #     self.copy_to_target()
+                #     self.replay_memory.update_mead_std()
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-            if trial % (self.copy_to_target_at // self.parallel_envs) == 0:
+            if trial % self.copy_to_target_at == 0:
                 self.copy_to_target()
                 self.replay_memory.update_mead_std()
 

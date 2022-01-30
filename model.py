@@ -23,7 +23,9 @@ class ReplayMemory:
         self.index = 0
         self.size = 0
         self.mean = 0
+        self.mean_reward = 0
         self.std = 1
+        self.std_reward = 1
 
     def append(self, obj):
         self.buffer[self.index] = obj
@@ -38,6 +40,8 @@ class ReplayMemory:
         rewards = np.array(self.buffer[:self.size])[:, 2]
         self.mean = np.mean(states, 0)
         self.std = np.std(states, 0)
+        self.mean_reward = np.mean(rewards)
+        self.std_reward = np.std(rewards)
 
     def __len__(self):
         return self.size
@@ -96,7 +100,7 @@ class Model:
         X = value + (advantage - tf.math.reduce_mean(advantage, axis=1, keepdims=True))
         model = keras.Model(inputs=X_input, outputs=X)
         model.compile(loss="huber_loss",
-                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, clipnorm=1))
+                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, global_clipnorm=1))
         return model
 
     def copy_to_target(self):
@@ -121,7 +125,8 @@ class Model:
         targets = self.model.predict(state, batch_size=len(state))
         next_action = self.model.predict(new_state, batch_size=len(state)).argmax(1)
         Q_future = self.target_model.predict(new_state, batch_size=len(state))[np.arange(len(targets)), next_action]
-        targets[np.arange(len(targets)), action] = reward + (1 - done) * Q_future * self.gamma
+        discounted_rewards = reward + (1 - done) * Q_future * self.gamma
+        targets[np.arange(len(targets)), action] = discounted_rewards
         return targets
 
     def learn_over_replay(self, stored):
@@ -131,6 +136,7 @@ class Model:
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
             state = (np.vstack(state) - self.replay_memory.mean) / self.replay_memory.std
             next_state = (np.vstack(next_state) - self.replay_memory.mean) / self.replay_memory.std
+            rewards = rewards / (self.replay_memory.std_reward + 1e-8)
             targets = self.create_targets(state, action.astype(int), rewards, next_state, is_done)
             loss = self.model.fit(state, targets, epochs=1, verbose=False, batch_size=self.batch_size, shuffle=False)
             return loss.history['loss'][0]
@@ -188,6 +194,9 @@ class Model:
                   'Loss', f'{np.mean(losses_of_trial):.4f}', '\t|\t',
                   # 'TargetUpdates', trial // (self.copy_to_target_at // self.parallel_envs), '\t|\t',
                   sep='\t')
-        self.model.save('weights')
+        self.model.save('weights.h5')
+        json.dump({str(k): str(v) for (k, v) in self.replay_memory.__dict__.items()
+                   if k not in ('buffer', ) and not k.startswith('__')},
+                  open('params.json', 'w'))
         return self
         # return np.mean(total_rewards[-10:])

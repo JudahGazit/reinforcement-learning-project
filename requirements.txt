@@ -8,3 +8,5 @@ pyglet
 box2d-py
 tensorflow-gpu
 cudatoolkit
+optuna
+tensorflow_probability

@@ -51,7 +51,7 @@ class ReplayMemory:
         return self.size
 
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=3, tau=0.68, learning_rate=9e-05):
+    def __init__(self, env, batch_frames, action_step_size=3, tau=0.376, learning_rate=2.4e-04, huber_delta=1):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
@@ -83,6 +83,9 @@ class Model:
         self.replay_memory = ReplayMemory(500_000)
         self.model = self.create_model()
         self.target_model = self.create_model()
+        self.q_model = keras.models.Model(inputs=self.model.inputs, outputs=self.model.get_layer('Q').output)
+        self.q_model.compile(loss=keras.losses.Huber(huber_delta),
+                             optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, clipnorm=1))
         self.copy_to_target()
 
 
@@ -115,8 +118,6 @@ class Model:
         P = tf.matmul(L, tf.transpose(L, (0, 2, 1)))
         A = - 0.5 * tf.matmul(tf.matmul(tf.transpose(tf.expand_dims(action, -1) - tf.expand_dims(mu, -1), (0, 2, 1)), P), tf.expand_dims(action, -1) - tf.expand_dims(mu, -1))
         Q = keras.layers.Add(name='Q')([tf.squeeze(A, 1), V])
-
-        # dummy_loss = lambda y_true, y_pred: 0.0
         model = keras.Model(inputs=[X_input, action], outputs=[Q, V, mu])
         model.compile(loss='huber_loss',
                       optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, clipnorm=1))
@@ -135,10 +136,10 @@ class Model:
         return payload
 
     def act(self, states, stochastic=True):
-        _, _, action = self.model.predict([(states - self.replay_memory.mean) / (self.replay_memory.std + EPSILON),
-                                      np.zeros((len(states), 4))],
-                                     batch_size=len(states))
-        # action = np.clip(action + stochastic * self.epsilon * np.random.randn(action.shape[1]), -1, 1)
+        res = self.model.predict([(states - self.replay_memory.mean) / (self.replay_memory.std + EPSILON),
+                                  np.zeros((len(states), 4))],
+                                 batch_size=len(states))
+        action = res[-1]
         if stochastic and random.random() < self.epsilon:
             action = np.random.random(action.shape) * 2 - 1
         return action
@@ -146,23 +147,23 @@ class Model:
 
 
     def create_targets(self, state, action, reward, new_state, done):
-        Q, V, _ = self.model.predict([state, action], batch_size=len(state))
-        _, new_V, _ = self.target_model.predict([new_state, np.zeros((len(new_state), 4))], batch_size=len(state))
-        discounted_rewards = reward + (1 - done) * new_V.flatten() * self.gamma
-        targets = np.expand_dims(discounted_rewards, -1).astype(float), V, action
+        _, _, next_action = self.model.predict([new_state, np.zeros(action.shape)], batch_size=len(state))
+        future_Q, _, _ = self.target_model.predict([new_state, next_action], batch_size=len(state))
+        discounted_rewards = reward + (1 - done) * future_Q.squeeze() * self.gamma
+        targets = np.expand_dims(discounted_rewards, -1).astype(float)
         return targets
 
     def learn_over_replay(self, stored):
         if len(self.replay_memory) >= self.minimum_states:
-            samples = np.array(self.replay_memory.sample(self.batch_size))
-            # samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
+            # samples = np.array(self.replay_memory.sample(self.batch_size))
+            samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
             state = (np.vstack(state) - self.replay_memory.mean) / (self.replay_memory.std + EPSILON)
             next_state = (np.vstack(next_state) - self.replay_memory.mean) / (self.replay_memory.std + EPSILON)
             action = np.vstack(action)
             rewards = (rewards / (self.replay_memory.std_reward + EPSILON)).astype(np.float)
             targets = self.create_targets(state, action, rewards, next_state, is_done)
-            loss = self.model.fit([state, action], targets, epochs=1, verbose=False, batch_size=self.batch_size, shuffle=False)
+            loss = self.q_model.fit([state, action], targets, epochs=1, verbose=False, batch_size=self.batch_size, shuffle=False)
             return loss.history['loss'][0]
         else:
             self.replay_memory.update_mead_std()
@@ -183,6 +184,7 @@ class Model:
             for step in range(episode_length):
                 total_steps += 1
                 actions = self.act(states)
+                # actions[np.isclose(actions, 0, atol=0.5)] = 0
                 new_states = np.array([[env.step(action) for _ in range(self.batch_frames)]
                                        for env, action in zip(envs, actions)])
                 rewards = np.maximum(np.maximum(new_states[:, :, 1], -10).sum(1), -10)

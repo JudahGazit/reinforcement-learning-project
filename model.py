@@ -51,7 +51,7 @@ class ReplayMemory:
         return self.size
 
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=3, tau=0.376, learning_rate=2.4e-04, huber_delta=1):
+    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.99, huber_delta=1):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
@@ -65,7 +65,7 @@ class Model:
         self.gamma = 0.99
         self.epsilon = 1
         self.epsilon_min = 0.01
-        self.epsilon_decay = 0.99
+        self.epsilon_decay = eps_decay
         # self.learning_rate = 0.00005478 #learning_rate ## Normal
         self.learning_rate = learning_rate
         self.tau = tau
@@ -107,7 +107,7 @@ class Model:
 
         X = X_input
         X = Dense(512, activation='relu')(X)
-        X = Dense(512, activation='relu')(X)
+        # X = Dense(512, activation='relu')(X)
         X = Dense(256, activation='relu')(X)
 
         mu = Dense(action_size, activation='tanh', name='mu')(X)
@@ -184,7 +184,7 @@ class Model:
             for step in range(episode_length):
                 total_steps += 1
                 actions = self.act(states)
-                # actions[np.isclose(actions, 0, atol=0.5)] = 0
+                actions[np.isclose(actions, 0, atol=0.5)] = 0
                 new_states = np.array([[env.step(action) for _ in range(self.batch_frames)]
                                        for env, action in zip(envs, actions)])
                 rewards = np.maximum(np.maximum(new_states[:, :, 1], -10).sum(1), -10)

@@ -75,7 +75,7 @@ if __name__ == '__main__':
     env = gym.make(env_name).env
     batch_frames = 2
     with tf.device('cpu'):
-        model, _ = Model(env_name, batch_frames).train(3000, 2000)
+        model, _ = Model(env_name, batch_frames).train(3000, 1000)
     for i in range(10):
         play_by_model(env, model, batch_frames, f'game_temp{i+1}.gif')
     # animation.save('game.gif')

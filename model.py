@@ -51,7 +51,7 @@ class ReplayMemory:
         return self.size
 
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.99, huber_delta=1):
+    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.995, huber_delta=1):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
@@ -107,7 +107,7 @@ class Model:
 
         X = X_input
         X = Dense(512, activation='relu')(X)
-        # X = Dense(512, activation='relu')(X)
+        X = Dense(512, activation='relu')(X)
         X = Dense(256, activation='relu')(X)
 
         mu = Dense(action_size, activation='tanh', name='mu')(X)
@@ -143,8 +143,6 @@ class Model:
         if stochastic and random.random() < self.epsilon:
             action = np.random.random(action.shape) * 2 - 1
         return action
-
-
 
     def create_targets(self, state, action, reward, new_state, done):
         _, _, next_action = self.model.predict([new_state, np.zeros(action.shape)], batch_size=len(state))

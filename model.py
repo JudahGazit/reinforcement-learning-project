@@ -14,6 +14,7 @@ import numpy as np
 import scipy.special
 import tensorflow as tf
 import tensorflow_probability as tfp
+import tensorflow_addons as tfa
 from keras.layers import Dense, Input, GaussianNoise, ReLU, BatchNormalization, Dropout
 # from mlflow import log_metric, log_param
 EPSILON = 1e-12
@@ -21,7 +22,7 @@ EPSILON = 1e-12
 warnings.filterwarnings("ignore")
 
 class ReplayMemory:
-    def __init__(self, max_size):
+    def __init__(self, max_size, epsilon=EPSILON):
         self.buffer = [None] * max_size
         self.max_size = max_size
         self.index = 0
@@ -30,6 +31,7 @@ class ReplayMemory:
         self.mean_reward = 0
         self.std = 1
         self.std_reward = 1
+        self.epsilon = epsilon
 
     def append(self, obj):
         self.buffer[self.index] = obj
@@ -42,16 +44,23 @@ class ReplayMemory:
     def update_mead_std(self):
         states = np.array(self.buffer[:self.size])[:, 0]
         rewards = np.array(self.buffer[:self.size])[:, 2]
-        self.mean = np.mean(states, 0)
-        self.std = np.std(states, 0)
+        self.mean = np.stack(states).mean((2, 0))[:, None]
+        self.mean[0] = 0.5
+        self.std = np.stack(states).std((2, 0))[:, None]
         self.mean_reward = np.mean(rewards)
-        self.std_reward = np.std(rewards)
+        self.std_reward = 1 #np.std(rewards)
+
+    def normalize_state(self, state):
+        return np.clip((state - self.mean) / (self.std + self.epsilon), -10, 10)
+
+    def normalize_reward(self, reward):
+        return reward / (self.std_reward + self.epsilon)
 
     def __len__(self):
         return self.size
 
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.995, huber_delta=1):
+    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.99, huber_delta=1):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
@@ -102,11 +111,12 @@ class Model:
         number_of_features = self.env.observation_space.shape[0] * self.batch_frames
         action_size = self.env.action_space.shape[0]
         print('Number of features', number_of_features)
-        X_input = Input(number_of_features)
+        X_input = Input((self.env.observation_space.shape[0], self.batch_frames))
         action = Input(action_size)
 
         X = X_input
-        X = Dense(512, activation='relu')(X)
+        X = keras.layers.Conv1D(32, 2, activation='relu')(X)
+        X = keras.layers.Flatten()(X)
         X = Dense(512, activation='relu')(X)
         X = Dense(256, activation='relu')(X)
 
@@ -136,10 +146,11 @@ class Model:
         return payload
 
     def act(self, states, stochastic=True):
-        res = self.model.predict([(states - self.replay_memory.mean) / (self.replay_memory.std + EPSILON),
+        res = self.model.predict([self.replay_memory.normalize_state(states),
                                   np.zeros((len(states), 4))],
                                  batch_size=len(states))
         action = res[-1]
+        action = np.clip(action + np.random.randn(action.shape[1]) * 0.05, -1, 1) if stochastic else action
         if stochastic and random.random() < self.epsilon:
             action = np.random.random(action.shape) * 2 - 1
         return action
@@ -156,10 +167,10 @@ class Model:
             # samples = np.array(self.replay_memory.sample(self.batch_size))
             samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
-            state = (np.vstack(state) - self.replay_memory.mean) / (self.replay_memory.std + EPSILON)
-            next_state = (np.vstack(next_state) - self.replay_memory.mean) / (self.replay_memory.std + EPSILON)
+            state = self.replay_memory.normalize_state(np.stack(state))
+            next_state = self.replay_memory.normalize_state(np.stack(next_state))
             action = np.vstack(action)
-            rewards = (rewards / (self.replay_memory.std_reward + EPSILON)).astype(np.float)
+            rewards = self.replay_memory.normalize_reward(rewards)
             targets = self.create_targets(state, action, rewards, next_state, is_done)
             loss = self.q_model.fit([state, action], targets, epochs=1, verbose=False, batch_size=self.batch_size, shuffle=False)
             return loss.history['loss'][0]
@@ -167,7 +178,7 @@ class Model:
             self.replay_memory.update_mead_std()
         return 0
 
-    def train(self, episodes=3000, episode_length=2000):
+    def train(self, episodes=3000, episode_length=2000, render=False):
         envs = [gym.make(self.env_name).env for _ in range(self.parallel_envs)]
         losses = []
         total_rewards = []
@@ -176,24 +187,26 @@ class Model:
             if len(total_rewards) > 5 and np.mean(total_rewards[-5:]) > 300:
                 break
             states = np.array([env.reset() for env in envs])
-            states = np.hstack([states for _ in range(self.batch_frames)])
+            states = np.stack([states for _ in range(self.batch_frames)], 2)
             total_reward = 0
             losses_of_trial = []
             for step in range(episode_length):
+                if render:
+                    envs[0].render()
                 total_steps += 1
                 actions = self.act(states)
-                actions[np.isclose(actions, 0, atol=0.5)] = 0
+                # actions[np.isclose(actions, 0, atol=0.5)] = 0
                 new_states = np.array([[env.step(action) for _ in range(self.batch_frames)]
                                        for env, action in zip(envs, actions)])
                 rewards = np.maximum(np.maximum(new_states[:, :, 1], -10).sum(1), -10)
                 total_reward += rewards.mean()
                 for state, action, reward, new_state in zip(states, actions, rewards, new_states):
-                    stored = self.remember(state, action, reward, np.hstack(new_state[:, 0]), new_state[:, 2].any())
+                    stored = self.remember(state, action, reward, np.stack(new_state[:, 0], 1), new_state[:, 2].any())
                 if step % self.learn_every == 0:
                     loss = self.learn_over_replay(stored)
                     losses_of_trial.append(loss)
 
-                states = np.array(new_states[:, :, 0].tolist()).reshape(states.shape)
+                states = np.array(new_states[:, :, 0].tolist()).transpose((0, 2, 1))
                 if new_states[:, :, 2].any():
                     break
 

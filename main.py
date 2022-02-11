@@ -9,7 +9,7 @@ import numpy as np
 import imageio
 
 from model import Model
-
+from model_dqn import ModelDQN
 
 tf.compat.v1.disable_v2_behavior()
 tf.compat.v1.disable_eager_execution()
@@ -24,7 +24,7 @@ def play_by_model(env, model, batch_frames, file_name='game.gif'):
     total_reward = 0
     for i in range(2000):
         action = model.act(state.reshape(1, -1), stochastic=False)[0]
-        batch_states = np.array([env.step(action) for _ in range(batch_frames)])
+        batch_states = np.array([env.step(model.action_space[action]) for _ in range(batch_frames)])
         state, reward, done, info = np.concatenate(batch_states[:, 0]), np.array(batch_states[:, 1]), *batch_states[-1, 2:]
         reward = np.maximum(reward, -10).sum()
         total_reward += reward
@@ -71,11 +71,11 @@ def load_model(file_name='50k'):
     return model
 
 if __name__ == '__main__':
-    env_name = "BipedalWalker-v3"
+    env_name = "BipedalWalkerHardcore-v3"
     env = gym.make(env_name).env
     batch_frames = 2
     with tf.device('cpu'):
-        model, _ = Model(env_name, batch_frames).train(3000, 1000)
+        model = ModelDQN(env_name, batch_frames).train(3000, 1000)
     for i in range(10):
         play_by_model(env, model, batch_frames, f'game_temp{i+1}.gif')
     # animation.save('game.gif')

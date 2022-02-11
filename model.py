@@ -59,15 +59,34 @@ class ReplayMemory:
     def __len__(self):
         return self.size
 
+class OUStrategy:
+    def __init__(self, actions=4, mu=0, theta=0.05, sigma=0.1, **kwargs):
+        self.mu = mu
+        self.theta = theta
+        self.sigma = sigma
+        self.actions = actions
+        self.state = np.ones(actions) * self.mu
+        self.reset()
+
+    def reset(self):
+        self.state = np.ones(self.actions) * self.mu
+
+    def noise(self, action):
+        x = self.state
+        dx = self.theta * (self.mu - x) + self.sigma * np.random.randn(len(x))
+        self.state = x + dx
+        return np.clip(action + self.state, -1, 1)
+
+
 class Model:
-    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.99, huber_delta=1):
+    def __init__(self, env, batch_frames, action_step_size=3, tau=0.3, learning_rate=2.4e-04, eps_decay=0.995, huber_delta=1):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
         self.parallel_envs = 1
         self.action_step_size = action_step_size
         self.copy_to_target_at = 1 #copy_to_target_at
-        self.learn_every = 8
+        self.learn_every = 1
         self.minimum_states = 5000
         self.batch_frames = batch_frames
         self.batch_size = 128
@@ -78,6 +97,7 @@ class Model:
         # self.learning_rate = 0.00005478 #learning_rate ## Normal
         self.learning_rate = learning_rate
         self.tau = tau
+        self.strategy = OUStrategy()
         # self.tau = 0.8307
         # self.learning_rate = 0.0004386 # learning_rate ## hardcore
         # self.tau = 0.0662
@@ -115,10 +135,15 @@ class Model:
         action = Input(action_size)
 
         X = X_input
-        X = keras.layers.Conv1D(32, 2, activation='relu')(X)
+        # X = keras.layers.Conv1D(8, 2, activation='relu')(X)
         X = keras.layers.Flatten()(X)
         X = Dense(512, activation='relu')(X)
+        X = GaussianNoise(1)(X)
+        X = keras.layers.LayerNormalization()(X)
+        # X = Dense(512, activation='relu')(X)
         X = Dense(256, activation='relu')(X)
+        X = GaussianNoise(1)(X)
+        X = keras.layers.LayerNormalization()(X)
 
         mu = Dense(action_size, activation='tanh', name='mu')(X)
         entries = Dense(action_size * (action_size + 1) / 2, activation='tanh')(X)
@@ -150,22 +175,23 @@ class Model:
                                   np.zeros((len(states), 4))],
                                  batch_size=len(states))
         action = res[-1]
-        action = np.clip(action + np.random.randn(action.shape[1]) * 0.05, -1, 1) if stochastic else action
-        if stochastic and random.random() < self.epsilon:
-            action = np.random.random(action.shape) * 2 - 1
+        # action = np.clip(action + np.random.randn(action.shape[1]) * 0.05, -1, 1) if stochastic else action
+        # if stochastic and random.random() < self.epsilon:
+        #     action = np.random.random(action.shape) * 2 - 1
         return action
 
     def create_targets(self, state, action, reward, new_state, done):
-        _, _, next_action = self.model.predict([new_state, np.zeros(action.shape)], batch_size=len(state))
-        future_Q, _, _ = self.target_model.predict([new_state, next_action], batch_size=len(state))
-        discounted_rewards = reward + (1 - done) * future_Q.squeeze() * self.gamma
+        _, future_V, _ = self.target_model.predict([new_state, np.zeros(action.shape)], batch_size=len(state))
+        discounted_rewards = reward + (1 - done) * future_V.squeeze() * self.gamma
         targets = np.expand_dims(discounted_rewards, -1).astype(float)
         return targets
 
-    def learn_over_replay(self, stored):
+    def learn_over_replay(self, stored=None):
         if len(self.replay_memory) >= self.minimum_states:
-            # samples = np.array(self.replay_memory.sample(self.batch_size))
-            samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
+            if stored is not None:
+                samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
+            else:
+                samples = np.array(self.replay_memory.sample(self.batch_size))
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
             state = self.replay_memory.normalize_state(np.stack(state))
             next_state = self.replay_memory.normalize_state(np.stack(next_state))
@@ -190,20 +216,23 @@ class Model:
             states = np.stack([states for _ in range(self.batch_frames)], 2)
             total_reward = 0
             losses_of_trial = []
+            # self.strategy.reset()
             for step in range(episode_length):
                 if render:
                     envs[0].render()
                 total_steps += 1
                 actions = self.act(states)
+                # actions = self.strategy.noise(self.act(states))
                 # actions[np.isclose(actions, 0, atol=0.5)] = 0
                 new_states = np.array([[env.step(action) for _ in range(self.batch_frames)]
                                        for env, action in zip(envs, actions)])
                 rewards = np.maximum(np.maximum(new_states[:, :, 1], -10).sum(1), -10)
                 total_reward += rewards.mean()
+                rewards = np.clip(rewards, -10, 1)
                 for state, action, reward, new_state in zip(states, actions, rewards, new_states):
                     stored = self.remember(state, action, reward, np.stack(new_state[:, 0], 1), new_state[:, 2].any())
                 if step % self.learn_every == 0:
-                    loss = self.learn_over_replay(stored)
+                    loss = np.mean([self.learn_over_replay(stored), self.learn_over_replay()])
                     losses_of_trial.append(loss)
 
                 states = np.array(new_states[:, :, 0].tolist()).transpose((0, 2, 1))

@@ -1,5 +1,6 @@
 import copy
 import itertools
+import json
 import random
 import warnings
 
@@ -46,15 +47,14 @@ class ReplayMemory:
     def __len__(self):
         return self.size
 
-class Model:
-    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=10, learning_rate=0.0001):
+class Agent:
+    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=10, learning_rate=0.00005478):
         self.env_name = env
         self.env = gym.make(self.env_name).env
 
         self.parallel_envs = 1
         self.action_step_size = action_step_size
-        self.copy_to_target_at = 10 #copy_to_target_at
-        # self.copy_to_target_at = 1000 #copy_to_target_at ## hardcore
+        self.copy_to_target_at = copy_to_target_at
         self.learn_every = 2
         self.minimum_states = 5000
         self.batch_frames = batch_frames
@@ -63,8 +63,7 @@ class Model:
         self.epsilon = 1
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
-        self.learning_rate = 0.00005478 #learning_rate ## Normal
-        # self.learning_rate = 0.000792 # learning_rate ## hardcore
+        self.learning_rate = learning_rate
 
         for k, v in self.__dict__.items():
             if k != 'env':
@@ -129,10 +128,14 @@ class Model:
         targets[np.arange(len(targets)), action] = discounted_rewards
         return targets
 
-    def learn_over_replay(self, stored):
+    def _sample_from_replay(self, stored):
+        if stored is not None:
+            return np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
+        return np.array(self.replay_memory.sample(self.batch_size))
+
+    def learn_over_replay(self, stored=None):
         if len(self.replay_memory) >= self.minimum_states:
-            # samples = np.array(self.replay_memory.sample(self.batch_size))
-            samples = np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
+            samples = self._sample_from_replay(stored)
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
             state = (np.vstack(state) - self.replay_memory.mean) / self.replay_memory.std
             next_state = (np.vstack(next_state) - self.replay_memory.mean) / self.replay_memory.std
@@ -173,9 +176,6 @@ class Model:
                 if new_states[:, :, 2].any():
                     break
 
-                # if total_steps % self.copy_to_target_at == 0:
-                #     self.copy_to_target()
-                #     self.replay_memory.update_mead_std()
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
             if trial % self.copy_to_target_at == 0:
                 self.copy_to_target()

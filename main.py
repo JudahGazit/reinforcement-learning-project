@@ -1,4 +1,5 @@
 import gym
+import keras.models
 import tensorflow as tf
 import matplotlib
 import matplotlib.animation as animation
@@ -7,8 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import imageio
 
-from model import Model
-
+from model import Agent
+from model_dqn import ModelDQN
 
 tf.compat.v1.disable_v2_behavior()
 tf.compat.v1.disable_eager_execution()
@@ -21,13 +22,11 @@ def play_by_model(env, model, batch_frames, file_name='game.gif'):
     actions = []
     rewards = []
     total_reward = 0
-    # for i in range(500):
-    while True:
-        action = model.act(state.reshape(1, -1))[0]
+    for i in range(2000):
+        action = model.act(state.reshape(1, -1), stochastic=False)[0]
         batch_states = np.array([env.step(model.action_space[action]) for _ in range(batch_frames)])
-        state, reward, done, info = np.concatenate(batch_states[:, 0]), *batch_states[-1, 1:]
-        reward = np.maximum(reward, -10)
-        reward = reward if reward < 1 else (10 * reward) ** 2
+        state, reward, done, info = np.concatenate(batch_states[:, 0]), np.array(batch_states[:, 1]), *batch_states[-1, 2:]
+        reward = np.maximum(reward, -10).sum()
         total_reward += reward
 
         rewards.append(reward)
@@ -45,9 +44,9 @@ def play_by_model(env, model, batch_frames, file_name='game.gif'):
     plt.plot(np.arange(len(rewards)), np.cumsum(rewards), '-o')
     plt.title(f'reward per action - cumsum - {file_name}')
     plt.show()
-
-    counts = pd.value_counts(actions).reset_index()
-    counts['index'] = counts['index'].apply(lambda x: model.action_space[x])
+    #
+    counts = pd.value_counts((10 * np.array(actions)).round().tolist()).reset_index()
+    # counts['index'] = counts['index'].apply(lambda x: model.action_space[x])
     counts.set_index('index').head(10).plot(kind='barh', ax=plt.figure(figsize=(15, 5)).gca())
     plt.title(f'action dist - {file_name}')
     plt.show()
@@ -55,11 +54,28 @@ def play_by_model(env, model, batch_frames, file_name='game.gif'):
     # ani = animation.ArtistAnimation(fig, frames, interval=50, blit=True, repeat=False)
     # return ani
 
+import json
+def load_model(file_name='50k'):
+    model = Agent(env_name, batch_frames)
+    model.model = keras.models.load_model(f'weights{file_name}.h5')
+    model.target_model = keras.models.load_model(f'weights{file_name}.h5')
+    j = json.load(open(f'params{file_name}.json'))
+    for k, v in j.items():
+        if '[' in v:
+            v = np.fromstring(v[1:-1], sep=' ')
+        elif float(v).is_integer():
+            v = int(v)
+        else:
+            v = float(v)
+        setattr(model.replay_memory, k, v)
+    return model
 
 if __name__ == '__main__':
-    env = gym.make("BipedalWalker-v3").env
+    env_name = "BipedalWalkerHardcore-v3"
+    env = gym.make(env_name).env
     batch_frames = 2
-    model = Model("BipedalWalker-v3", batch_frames).train()
+    with tf.device('cpu'):
+        model = ModelDQN(env_name, batch_frames).train(3000, 1000)
     for i in range(10):
         play_by_model(env, model, batch_frames, f'game_temp{i+1}.gif')
     # animation.save('game.gif')

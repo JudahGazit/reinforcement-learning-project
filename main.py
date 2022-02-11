@@ -34,6 +34,7 @@ def grade_model(model, trials=100):
         trial_scores.append(np.sum(model.play(2000, render=False)))
 
     plt.hist(trial_scores, 10)
+    plt.setp(plt.gca(), title=f'{model.env_name} - Rewards of {trials} trials')
     plt.show()
     return np.mean(trial_scores)
 
@@ -42,7 +43,8 @@ if __name__ == '__main__':
     env = gym.make(env_name).env
     batch_frames = 2
     # with tf.device('cpu'):
-        # model = Agent(env_name, batch_frames).train(3000, 1000)
+    #     model = Agent(env_name, batch_frames).train(3000, 1000)
+    #     model.save('saved_models/hardcore_weights')
     model = Agent(env_name, batch_frames).load('saved_models/weights')
     print('Model score', grade_model(model))
     # for i in range(10):

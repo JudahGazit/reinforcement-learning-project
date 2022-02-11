@@ -141,10 +141,7 @@ class Agent:
                 frames.append(self.env.render(mode='rgb_array'))
             if is_done:
                 break
-        if render:
-            return rewards, frames
-        else:
-            return rewards
+        return (rewards, frames) if render else rewards
 
     def save(self, name):
         self.model.save(name)

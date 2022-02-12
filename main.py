@@ -18,7 +18,7 @@ logging.basicConfig(format='[%(asctime)s] [%(levelname)s] %(message)s', stream=s
 def play_by_model(model, file_name='game.gif'):
     rewards, frames = model.play(2000, render=True)
 
-    imageio.mimsave(file_name, frames, duration=0.01)
+    imageio.mimsave(file_name, frames, fps=30)
 
     plt.plot(np.arange(len(rewards)), rewards, '-o')
     plt.title(f'reward per action - {file_name}')
@@ -44,8 +44,8 @@ if __name__ == '__main__':
     batch_frames = 2
     # with tf.device('cpu'):
     #     model = Agent(env_name, batch_frames).train(3000, 1000)
-    #     model.save('saved_models/hardcore_weights')
-    model = Agent(env_name, batch_frames).load('saved_models/weights')
+    #     model.save('saved_models/hardcore_weights_clip_state')
+    model = Agent(env_name, batch_frames).load('saved_models/hardcore_weights')
     print('Model score', grade_model(model))
-    # for i in range(10):
-    #     play_by_model(model, f'game_temp{i+1}.gif')
+    for i in range(10):
+        play_by_model(model, f'gifs/game_temp{i+1}.gif')

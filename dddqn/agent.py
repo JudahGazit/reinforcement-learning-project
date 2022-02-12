@@ -29,16 +29,18 @@ class Agent:
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
         self.replay_memory_size = 500_000
+        self.action_step_size = action_step_size
+        self.learning_rate = learning_rate
 
         for k, v in self.__dict__.items():
             if k != 'env':
                 logger.info(f'Setting param: {k} = {v}')
 
         self.replay_memory = ReplayMemory(self.replay_memory_size)
-        self.action_space = self.__make_action_space(action_step_size)
-        self.model = DDDQN(self.env.observation_space.shape[0], len(self.action_space), self.batch_frames, learning_rate, action_step_size)
+        self.action_space = self._make_action_space(action_step_size)
+        self.model = DDDQN(self.env.observation_space.shape[0], len(self.action_space), self.batch_frames, self.learning_rate, self.action_step_size)
 
-    def __make_action_space(self, action_step_size):
+    def _make_action_space(self, action_step_size):
         number_of_axes = self.env.action_space.shape[0]
         actions = itertools.product(*[np.linspace(-1, 1, action_step_size) for _ in range(number_of_axes)])
         actions = np.array(list(actions))
@@ -50,13 +52,13 @@ class Agent:
             return np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
         return np.array(self.replay_memory.sample(self.batch_size))
 
-    def __train_episode(self, episode_number, episode_length):
+    def _train_episode(self, episode_number, episode_length):
         state = self.env.reset()
         state = np.hstack([state for _ in range(self.batch_frames)])
         total_reward = 0
         losses_of_trial = []
         for step in range(episode_length):
-            next_state, reward, is_done, loss = self.__step(state, step)
+            next_state, reward, is_done, loss = self._step(state, step)
             total_reward += reward
             state = next_state
             losses_of_trial.append(loss)
@@ -67,24 +69,24 @@ class Agent:
         if episode_number % self.copy_to_target_at == 0:
             self.model.copy_to_target()
             self.replay_memory.update_mead_std()
-        self.__log_episode(episode_number, loss_of_trial, total_reward)
+        self._log_episode(episode_number, loss_of_trial, total_reward)
         return total_reward, loss_of_trial
 
-    def __step(self, state, step_number, train=True):
+    def _step(self, state, step_number, train=True):
         action = self.act(state, stochastic=train)
         next_state = np.array([self.env.step(self.action_space[action]) for _ in range(self.batch_frames)])
         next_state, reward, is_done, info = [np.hstack(next_state[:, i]) for i in range(next_state.shape[1])]
-        reward_clipped = np.maximum(reward, -10).sum()
+        reward_clipped = np.clip(np.maximum(reward, -10).sum(), -10, 1)
         if train:
             stored = self.remember(state, action, reward_clipped, next_state, is_done.any())
             loss = 0
             if step_number % self.learn_every == 0:
                 loss = self.learn_over_replay(stored)
-            return next_state, reward.sum(), is_done.any(), loss
+            return next_state, np.sum([reward.sum(), -100]), is_done.any(), loss
         else:
-            return next_state, reward.sum(), is_done.any()
+            return next_state, np.max([reward.sum(), -100]), is_done.any()
 
-    def __log_episode(self, episode_number, loss_of_trial, total_reward):
+    def _log_episode(self, episode_number, loss_of_trial, total_reward):
         logger.info(
             '\t|\t'.join([f'Episode {str.zfill(str(episode_number), 4)}',
                           f'Reward {total_reward:.4f}',
@@ -123,7 +125,7 @@ class Agent:
         for trial in range(episodes):
             to_stop = len(total_rewards) > finish_after and np.mean(total_rewards[-finish_after:]) > 300
             if not to_stop:
-                total_reward, loss = self.__train_episode(trial, episode_length)
+                total_reward, loss = self._train_episode(trial, episode_length)
                 total_rewards.append(total_reward)
                 losses.append(loss)
 
@@ -135,7 +137,7 @@ class Agent:
         frames = []
         rewards = []
         for i in range(length):
-            state, reward, is_done = self.__step(state, i, train=False)
+            state, reward, is_done = self._step(state, i, train=False)
             rewards.append(reward)
             if render:
                 frames.append(self.env.render(mode='rgb_array'))

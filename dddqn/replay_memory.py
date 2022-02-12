@@ -29,7 +29,8 @@ class ReplayMemory:
         self.std_reward = np.std(rewards)
 
     def normalize_state(self, states):
-        return (states - self.mean) / (self.std + self.epsilon)
+        normed = (states - self.mean) / (self.std + self.epsilon)
+        return normed
 
     def normalize_reward(self, reward):
         return reward / (self.std_reward + self.epsilon)

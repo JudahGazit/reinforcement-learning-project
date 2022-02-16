@@ -43,16 +43,17 @@ class DDDQN:
         next_action = self.model.predict(next_state, batch_size=len(state)).argmax(1)
         Q_future = self.target_model.predict(next_state, batch_size=len(state))[np.arange(len(targets)), next_action]
         discounted_rewards = reward + (1 - done) * Q_future * self.gamma
+        td_error = np.abs(targets[np.arange(len(targets)), action] - discounted_rewards)
         targets[np.arange(len(targets)), action] = discounted_rewards
-        return targets
+        return targets, td_error.max()
 
     def predict(self, states):
         return self.model.predict(states, batch_size=len(states))
 
     def fit(self, state, action, reward, next_state, is_done):
-        targets = self._create_targets(state, action, reward, next_state, is_done)
-        loss = self.model.fit(state, targets, epochs=1, verbose=False, batch_size=len(state), shuffle=False)
-        return loss.history['loss'][0]
+        targets, td_error = self._create_targets(state, action, reward, next_state, is_done)
+        self.model.fit(state, targets, epochs=1, verbose=False, batch_size=len(state), shuffle=False)
+        return td_error
 
     def save(self, name):
         self.model.save(f'{name}.h5')

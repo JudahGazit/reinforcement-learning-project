@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore")
 
 logger = logging.getLogger('Agent')
 
+
 class Agent:
     def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=10, learning_rate=0.00005478):
         super().__init__()
@@ -38,7 +39,8 @@ class Agent:
 
         self.replay_memory = ReplayMemory(self.replay_memory_size)
         self.action_space = self._make_action_space(action_step_size)
-        self.model = DDDQN(self.env.observation_space.shape[0], len(self.action_space), self.batch_frames, self.learning_rate, self.action_step_size)
+        self.model = DDDQN(self.env.observation_space.shape[0], len(self.action_space), self.batch_frames,
+                           self.learning_rate, self.action_step_size)
 
     def _make_action_space(self, action_step_size):
         number_of_axes = self.env.action_space.shape[0]
@@ -58,9 +60,8 @@ class Agent:
         total_reward = 0
         losses_of_trial = []
         for step in range(episode_length):
-            next_state, reward, is_done, loss = self._step(state, step)
+            state, reward, is_done, loss = self._step(state, step)
             total_reward += reward
-            state = next_state
             losses_of_trial.append(loss)
             if is_done.any():
                 break
@@ -82,7 +83,7 @@ class Agent:
             loss = 0
             if step_number % self.learn_every == 0:
                 loss = self.learn_over_replay(stored)
-            return next_state, np.sum([reward.sum(), -100]), is_done.any(), loss
+            return next_state, np.max([reward.sum(), -100]), is_done.any(), loss
         else:
             return next_state, np.max([reward.sum(), -100]), is_done.any()
 
@@ -106,6 +107,7 @@ class Agent:
             return loss
         else:
             self.replay_memory.update_mead_std()
+            self.epsilon = 1
         return 0
 
     def remember(self, state, action, reward, new_state, done):
@@ -148,7 +150,7 @@ class Agent:
     def save(self, name):
         self.model.save(name)
         json.dump({str(k): str(v) for (k, v) in self.replay_memory.__dict__.items()
-                   if k not in ('buffer', ) and not k.startswith('__')},
+                   if k not in ('buffer',) and not k.startswith('__')},
                   open(f'{name}.json', 'w'))
 
     def load(self, name):

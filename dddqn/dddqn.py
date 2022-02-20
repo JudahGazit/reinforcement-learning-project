@@ -27,12 +27,13 @@ class DDDQN:
         X = Dense(512, activation='relu')(X)
         X = Dense(512, activation='relu')(X)
         X = Dense(256, activation='relu')(X)
-        advantage = Dense(self.num_actions)(X)
+        advantage = Dense(4 * 3)(X)
+        advantage = tf.reshape(advantage, (-1, 4, 3))
         value = Dense(1)(X)
-        X = value + (advantage - tf.math.reduce_mean(advantage, axis=1, keepdims=True))
+        X = tf.expand_dims(value, 1) + (advantage - tf.math.reduce_mean(advantage, axis=2, keepdims=True))
         model = keras.Model(inputs=X_input, outputs=X)
-        model.compile(loss="huber_loss",
-                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, global_clipnorm=1))
+        model.compile(loss="mse",
+                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, clipvalue=1))
         return model
 
     def copy_to_target(self):
@@ -40,12 +41,14 @@ class DDDQN:
 
     def _create_targets(self, state, action, reward, next_state, done):
         targets = self.model.predict(state, batch_size=len(state))
-        next_action = self.model.predict(next_state, batch_size=len(state)).argmax(1)
-        Q_future = self.target_model.predict(next_state, batch_size=len(state))[np.arange(len(targets)), next_action]
-        discounted_rewards = reward + (1 - done) * Q_future * self.gamma
-        td_error = np.abs(targets[np.arange(len(targets)), action] - discounted_rewards)
-        targets[np.arange(len(targets)), action] = discounted_rewards
-        return targets, td_error.max()
+        next_action = self.model.predict(next_state, batch_size=len(state)).argmax(2) - 1
+        target_Q = self.target_model.predict(next_state, batch_size=len(state))
+        Q_future = np.array([target_Q[i, np.arange(4), next_action[i] + 1] for i in range(len(action))])
+        discounted_rewards = reward[:, None] + (1 - done)[:, None] * Q_future * self.gamma
+        td_error = np.abs(np.array([targets[i, np.arange(4), action[i] + 1] for i in range(len(action))]).sum(1) - discounted_rewards.sum(1))
+        for i in range(len(action)):
+            targets[i, np.arange(4), action[i] + 1] = discounted_rewards[i]
+        return targets, td_error.mean()
 
     def predict(self, states):
         return self.model.predict(states, batch_size=len(states))

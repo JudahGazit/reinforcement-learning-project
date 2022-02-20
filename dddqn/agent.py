@@ -75,7 +75,7 @@ class Agent:
 
     def _step(self, state, step_number, train=True):
         action = self.act(state, stochastic=train)
-        next_state = np.array([self.env.step(self.action_space[action]) for _ in range(self.batch_frames)])
+        next_state = np.array([self.env.step(action) for _ in range(self.batch_frames)])
         next_state, reward, is_done, info = [np.hstack(next_state[:, i]) for i in range(next_state.shape[1])]
         reward_clipped = np.clip(np.maximum(reward, -10).sum(), -10, 1)
         if train:
@@ -103,7 +103,7 @@ class Agent:
             state = self.replay_memory.normalize_state(np.vstack(state))
             next_state = self.replay_memory.normalize_state(np.vstack(next_state))
             rewards = self.replay_memory.normalize_reward(rewards)
-            loss = self.model.fit(state, action.astype(int), rewards, next_state, is_done)
+            loss = self.model.fit(state, np.vstack(action), rewards, next_state, is_done)
             return loss
         else:
             self.replay_memory.update_mead_std()
@@ -116,9 +116,9 @@ class Agent:
         return payload
 
     def act(self, state, stochastic=True):
-        action = np.argmax(self.model.predict(self.replay_memory.normalize_state(state.reshape(1, -1))), 1)[0]
+        action = self.model.predict(self.replay_memory.normalize_state(state.reshape(1, -1))).argmax(2)[0] - 1
         if (np.random.random() < self.epsilon) and stochastic:
-            action = random.randrange(len(self.action_space))
+            action = np.random.choice([-1, 0, 1], 4)
         return action
 
     def train(self, episodes=3000, episode_length=2000, finish_after=5):
@@ -136,10 +136,12 @@ class Agent:
     def play(self, length=2000, render=True):
         state = self.env.reset()
         state = np.hstack([state for _ in range(self.batch_frames)])
+        states = []
         frames = []
         rewards = []
         for i in range(length):
             state, reward, is_done = self._step(state, i, train=False)
+            states.append(state)
             rewards.append(reward)
             if render:
                 frames.append(self.env.render(mode='rgb_array'))

@@ -16,7 +16,7 @@ logger = logging.getLogger('Agent')
 
 
 class Agent:
-    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=10, learning_rate=0.00005478):
+    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=1, learning_rate=0.00005478):
         super().__init__()
         self.env_name = env
         self.env = gym.make(self.env_name).env
@@ -55,8 +55,7 @@ class Agent:
         return np.array(self.replay_memory.sample(self.batch_size))
 
     def _train_episode(self, episode_number, episode_length):
-        state = self.env.reset()
-        state = np.hstack([state for _ in range(self.batch_frames)])
+        state = self.reset()
         total_reward = 0
         losses_of_trial = []
         for step in range(episode_length):
@@ -79,9 +78,9 @@ class Agent:
         next_state, reward, is_done, info = [np.hstack(next_state[:, i]) for i in range(next_state.shape[1])]
         reward_clipped = np.clip(np.maximum(reward, -10).sum(), -10, 1)
         if train:
-            stored = self.remember(state, action, reward_clipped, next_state, is_done.any())
+            stored = self.remember(state, action, reward_clipped, next_state, is_done.any() and reward_clipped < -5)
             loss = 0
-            if step_number % self.learn_every == 0:
+            if step_number > 0 and step_number % self.learn_every == 0:
                 loss = self.learn_over_replay(stored)
             return next_state, np.max([reward.sum(), -100]), is_done.any(), loss
         else:
@@ -121,7 +120,7 @@ class Agent:
             action = np.random.choice([-1, 0, 1], 4)
         return action
 
-    def train(self, episodes=3000, episode_length=2000, finish_after=5):
+    def train(self, episodes=3000, episode_length=2000, finish_after=2):
         losses = []
         total_rewards = []
         for trial in range(episodes):
@@ -134,8 +133,7 @@ class Agent:
         return self
 
     def play(self, length=2000, render=True):
-        state = self.env.reset()
-        state = np.hstack([state for _ in range(self.batch_frames)])
+        state = self.reset()
         states = []
         frames = []
         rewards = []
@@ -148,6 +146,11 @@ class Agent:
             if is_done:
                 break
         return (rewards, frames) if render else rewards
+
+    def reset(self):
+        state = self.env.reset()
+        state = np.hstack([state for _ in range(self.batch_frames)])
+        return state
 
     def save(self, name):
         self.model.save(name)

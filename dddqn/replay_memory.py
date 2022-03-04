@@ -3,7 +3,7 @@ import random
 import numpy as np
 
 class ReplayMemory:
-    def __init__(self, max_size):
+    def __init__(self, max_size, num_actions):
         self.buffer = [None] * max_size
         self.max_size = max_size
         self.index = 0
@@ -12,8 +12,12 @@ class ReplayMemory:
         self.std = 1
         self.std_reward = 1
         self.epsilon = 1e-12
+        self.action_count = [0] * num_actions
 
     def append(self, obj):
+        if self.index < self.size:
+            self.action_count[self.buffer[self.index][1]] -= 1
+        self.action_count[obj[1]] += 1
         self.buffer[self.index] = obj
         self.size = min(self.size + 1, self.max_size)
         self.index = (self.index + 1) % self.max_size

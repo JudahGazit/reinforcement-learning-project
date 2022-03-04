@@ -27,7 +27,7 @@ class Agent:
         self.minimum_states = 5000
         self.batch_size = 128
         self.epsilon = 1
-        self.epsilon_min = 0.01
+        self.epsilon_min = 0.005
         self.epsilon_decay = 0.99
         self.replay_memory_size = 1_000_000
         self.action_step_size = action_step_size
@@ -37,8 +37,8 @@ class Agent:
             if k != 'env':
                 logger.info(f'Setting param: {k} = {v}')
 
-        self.replay_memory = ReplayMemory(self.replay_memory_size)
         self.action_space = self._make_action_space(action_step_size)
+        self.replay_memory = ReplayMemory(self.replay_memory_size, len(self.action_space))
         self.model = DDDQN(self.env.observation_space.shape[0], len(self.action_space), self.batch_frames,
                            self.learning_rate, self.action_step_size)
 
@@ -167,7 +167,7 @@ class Agent:
         j = json.load(open(f'{name}.json'))
         for k, v in j.items():
             if '[' in v:
-                v = np.fromstring(v[1:-1], sep=' ')
+                v = np.fromstring(v[1:-1].replace(',', ''), sep=' ')
             elif float(v).is_integer():
                 v = int(v)
             else:

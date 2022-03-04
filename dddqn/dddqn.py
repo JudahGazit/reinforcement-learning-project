@@ -31,8 +31,8 @@ class DDDQN:
         value = Dense(1)(X)
         X = value + (advantage - tf.math.reduce_mean(advantage, axis=1, keepdims=True))
         model = keras.Model(inputs=X_input, outputs=X)
-        model.compile(loss="huber_loss",
-                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, global_clipnorm=1))
+        model.compile(loss="mse",
+                      optimizer=keras.optimizer_v2.rmsprop.RMSprop(learning_rate=self.learning_rate, clipvalue=1))
         return model
 
     def copy_to_target(self):
@@ -45,7 +45,7 @@ class DDDQN:
         discounted_rewards = reward + (1 - done) * Q_future * self.gamma
         td_error = np.abs(targets[np.arange(len(targets)), action] - discounted_rewards)
         targets[np.arange(len(targets)), action] = discounted_rewards
-        return targets, td_error.max()
+        return targets, td_error.mean()
 
     def predict(self, states):
         return self.model.predict(states, batch_size=len(states))

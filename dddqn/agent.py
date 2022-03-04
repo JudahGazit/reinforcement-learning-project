@@ -29,7 +29,7 @@ class Agent:
         self.epsilon = 1
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
-        self.replay_memory_size = 500_000
+        self.replay_memory_size = 1_000_000
         self.action_step_size = action_step_size
         self.learning_rate = learning_rate
 
@@ -55,8 +55,7 @@ class Agent:
         return np.array(self.replay_memory.sample(self.batch_size))
 
     def _train_episode(self, episode_number, episode_length):
-        state = self.env.reset()
-        state = np.hstack([state for _ in range(self.batch_frames)])
+        state = self.reset()
         total_reward = 0
         losses_of_trial = []
         for step in range(episode_length):
@@ -77,11 +76,11 @@ class Agent:
         action = self.act(state, stochastic=train)
         next_state = np.array([self.env.step(self.action_space[action]) for _ in range(self.batch_frames)])
         next_state, reward, is_done, info = [np.hstack(next_state[:, i]) for i in range(next_state.shape[1])]
-        reward_clipped = np.clip(np.maximum(reward, -10).sum(), -10, 1)
+        reward_clipped = np.clip(reward.sum(), -10, 1)
         if train:
-            stored = self.remember(state, action, reward_clipped, next_state, is_done.any())
+            stored = self.remember(state, action, reward_clipped, next_state, is_done.any() and reward_clipped < -5)
             loss = 0
-            if step_number % self.learn_every == 0:
+            if step_number > 0 and step_number % self.learn_every == 0:
                 loss = self.learn_over_replay(stored)
             return next_state, np.max([reward.sum(), -100]), is_done.any(), loss
         else:
@@ -118,10 +117,14 @@ class Agent:
     def act(self, state, stochastic=True):
         action = np.argmax(self.model.predict(self.replay_memory.normalize_state(state.reshape(1, -1))), 1)[0]
         if (np.random.random() < self.epsilon) and stochastic:
-            action = random.randrange(len(self.action_space))
+            if self.replay_memory.size:
+                weights = np.array([1 - a / self.replay_memory.size for a in self.replay_memory.action_count])
+                action = np.random.choice(len(self.action_space), p=weights / np.sum(weights))
+            else:
+                action = random.choices(range(len(self.action_space)))[0]
         return action
 
-    def train(self, episodes=3000, episode_length=2000, finish_after=5):
+    def train(self, episodes=3000, episode_length=2000, finish_after=10):
         losses = []
         total_rewards = []
         for trial in range(episodes):
@@ -134,18 +137,24 @@ class Agent:
         return self
 
     def play(self, length=2000, render=True):
-        state = self.env.reset()
-        state = np.hstack([state for _ in range(self.batch_frames)])
+        state = self.reset()
+        states = [state]
         frames = []
         rewards = []
         for i in range(length):
             state, reward, is_done = self._step(state, i, train=False)
+            states.append(state)
             rewards.append(reward)
             if render:
                 frames.append(self.env.render(mode='rgb_array'))
             if is_done:
                 break
         return (rewards, frames) if render else rewards
+
+    def reset(self):
+        state = self.env.reset()
+        state = np.hstack([state for _ in range(self.batch_frames)])
+        return state
 
     def save(self, name):
         self.model.save(name)

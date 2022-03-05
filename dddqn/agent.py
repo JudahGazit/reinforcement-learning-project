@@ -27,7 +27,7 @@ class Agent:
         self.minimum_states = 5000
         self.batch_size = 128
         self.epsilon = 1
-        self.epsilon_min = 0.005
+        self.epsilon_min = 0.01
         self.epsilon_decay = 0.99
         self.replay_memory_size = 1_000_000
         self.action_step_size = action_step_size
@@ -52,14 +52,15 @@ class Agent:
     def _sample_from_replay(self, stored):
         if stored is not None:
             return np.concatenate([self.replay_memory.sample(self.batch_size - 1), [stored]])
-        return np.array(self.replay_memory.sample(self.batch_size))
+        return self.replay_memory.sample(self.batch_size)
 
     def _train_episode(self, episode_number, episode_length):
         state = self.reset()
         total_reward = 0
         losses_of_trial = []
+        stuck_count = 0
         for step in range(episode_length):
-            state, reward, is_done, loss = self._step(state, step)
+            state, reward, is_done, loss, stuck_count = self._step(state, step, stuck_count=stuck_count)
             total_reward += reward
             losses_of_trial.append(loss)
             if is_done.any():
@@ -72,19 +73,20 @@ class Agent:
         self._log_episode(episode_number, loss_of_trial, total_reward)
         return total_reward, loss_of_trial
 
-    def _step(self, state, step_number, train=True):
-        action = self.act(state, stochastic=train)
+    def _step(self, state, step_number, train=True, stuck_count=0):
+        action = self.act(state, stochastic=train, stuck=stuck_count >= 1)
         next_state = np.array([self.env.step(self.action_space[action]) for _ in range(self.batch_frames)])
         next_state, reward, is_done, info = [np.hstack(next_state[:, i]) for i in range(next_state.shape[1])]
         reward_clipped = np.clip(reward.sum(), -10, 1)
+        stuck_count = (stuck_count + 1) if np.max(abs(next_state - state)) < 1e-4 else 0
         if train:
             stored = self.remember(state, action, reward_clipped, next_state, is_done.any() and reward_clipped < -5)
             loss = 0
             if step_number > 0 and step_number % self.learn_every == 0:
                 loss = self.learn_over_replay(stored)
-            return next_state, np.max([reward.sum(), -100]), is_done.any(), loss
+            return next_state, np.max([reward.sum(), -100]), is_done.any(), loss, stuck_count
         else:
-            return next_state, np.max([reward.sum(), -100]), is_done.any()
+            return next_state, np.max([reward.sum(), -100]), is_done.any(), stuck_count
 
     def _log_episode(self, episode_number, loss_of_trial, total_reward):
         logger.info(
@@ -97,13 +99,15 @@ class Agent:
 
     def learn_over_replay(self, stored=None):
         if len(self.replay_memory) >= self.minimum_states:
-            samples = self._sample_from_replay(stored)
+            indices, samples, weights = self._sample_from_replay(None)
             state, action, rewards, next_state, is_done = [samples[:, i] for i in range(samples.shape[1])]
             state = self.replay_memory.normalize_state(np.vstack(state))
             next_state = self.replay_memory.normalize_state(np.vstack(next_state))
             rewards = self.replay_memory.normalize_reward(rewards)
-            loss = self.model.fit(state, action.astype(int), rewards, next_state, is_done)
-            return loss
+            loss = self.model.fit(state, action.astype(int), rewards, next_state, is_done, weights)
+            _, td_error = self.model._create_targets(state, action.astype(int), rewards, next_state, is_done)
+            self.replay_memory.update(indices, td_error)
+            return loss.mean()
         else:
             self.replay_memory.update_mead_std()
             self.epsilon = 1
@@ -111,12 +115,13 @@ class Agent:
 
     def remember(self, state, action, reward, new_state, done):
         payload = [state, action, reward, new_state, done]
-        self.replay_memory.append(payload)
+        _, td_error = self.model._create_targets(np.expand_dims(state, 0), action, reward, np.expand_dims(new_state, 0), done)
+        self.replay_memory.append(payload, td_error)
         return payload
 
-    def act(self, state, stochastic=True):
+    def act(self, state, stochastic=True, stuck=False):
         action = np.argmax(self.model.predict(self.replay_memory.normalize_state(state.reshape(1, -1))), 1)[0]
-        if (np.random.random() < self.epsilon) and stochastic:
+        if stuck or ((np.random.random() < self.epsilon) and stochastic):
             if self.replay_memory.size:
                 weights = np.array([1 - a / self.replay_memory.size for a in self.replay_memory.action_count])
                 action = np.random.choice(len(self.action_space), p=weights / np.sum(weights))
@@ -141,8 +146,9 @@ class Agent:
         states = [state]
         frames = []
         rewards = []
+        stuck_count = 0
         for i in range(length):
-            state, reward, is_done = self._step(state, i, train=False)
+            state, reward, is_done, stuck_count = self._step(state, i, train=False, stuck_count=stuck_count)
             states.append(state)
             rewards.append(reward)
             if render:

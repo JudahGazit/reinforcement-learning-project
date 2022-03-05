@@ -45,14 +45,15 @@ class DDDQN:
         discounted_rewards = reward + (1 - done) * Q_future * self.gamma
         td_error = np.abs(targets[np.arange(len(targets)), action] - discounted_rewards)
         targets[np.arange(len(targets)), action] = discounted_rewards
-        return targets, td_error.mean()
+        return targets, td_error
 
     def predict(self, states):
-        return self.model.predict(states, batch_size=len(states))
+        q = self.model.predict(states, batch_size=len(states))
+        return q
 
-    def fit(self, state, action, reward, next_state, is_done):
+    def fit(self, state, action, reward, next_state, is_done, weights):
         targets, td_error = self._create_targets(state, action, reward, next_state, is_done)
-        self.model.fit(state, targets, epochs=1, verbose=False, batch_size=len(state), shuffle=False)
+        self.model.fit(state, targets, epochs=1, verbose=False, batch_size=len(state), shuffle=False, sample_weight=weights)
         return td_error
 
     def save(self, name):

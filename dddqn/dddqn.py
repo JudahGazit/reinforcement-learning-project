@@ -36,7 +36,7 @@ class DDDQN:
         return model
 
     def copy_to_target(self):
-        self.target_model.set_weights(copy.deepcopy(self.model.get_weights()))
+        self.target_model.set_weights(self.model.get_weights())
 
     def _create_targets(self, state, action, reward, next_state, done):
         targets = self.model.predict(state, batch_size=len(state))

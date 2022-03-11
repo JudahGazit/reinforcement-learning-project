@@ -1,5 +1,3 @@
-import copy
-
 import keras.models
 import keras.optimizer_v2
 import numpy as np

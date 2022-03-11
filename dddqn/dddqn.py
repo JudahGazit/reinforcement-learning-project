@@ -16,8 +16,10 @@ class DDDQN:
         self.learning_rate = learning_rate
         self.batch_frames = batch_frames
         self.action_step_size = action_step_size
-        self.model = self.create_model()
-        self.target_model = self.create_model()
+        self.q1 = self.create_model()
+        self.q1_target = self.create_model()
+        self.q2 = self.create_model()
+        self.q2_target = self.create_model()
         self.copy_to_target()
 
     def create_model(self):
@@ -36,28 +38,33 @@ class DDDQN:
         return model
 
     def copy_to_target(self):
-        self.target_model.set_weights(self.model.get_weights())
+        self.q1_target.set_weights(self.q1.get_weights())
+        self.q2_target.set_weights(self.q2.get_weights())
 
     def _create_targets(self, state, action, reward, next_state, done):
-        targets = self.model.predict(state, batch_size=len(state))
-        next_action = self.model.predict(next_state, batch_size=len(state)).argmax(1)
-        Q_future = self.target_model.predict(next_state, batch_size=len(state))[np.arange(len(targets)), next_action]
-        discounted_rewards = reward + (1 - done) * Q_future * self.gamma
-        td_error = np.abs(targets[np.arange(len(targets)), action] - discounted_rewards)
-        targets[np.arange(len(targets)), action] = discounted_rewards
-        return targets, td_error.mean()
+        targets_1 = self.q1.predict(state, batch_size=len(state))
+        targets_2 = self.q2.predict(state, batch_size=len(state))
+        next_action = self.q1.predict(next_state, batch_size=len(state)).argmax(1)
+        Q_future_1 = self.q1_target.predict(next_state, batch_size=len(state))[np.arange(len(targets_1)), next_action]
+        Q_future_2 = self.q2_target.predict(next_state, batch_size=len(state))[np.arange(len(targets_2)), next_action]
+        discounted_rewards = reward + (1 - done) * np.minimum(Q_future_1, Q_future_2) * self.gamma
+        td_error = np.abs(targets_1[np.arange(len(targets_1)), action] - discounted_rewards)
+        targets_1[np.arange(len(targets_1)), action] = discounted_rewards
+        targets_2[np.arange(len(targets_2)), action] = discounted_rewards
+        return targets_1, targets_2, td_error.mean()
 
     def predict(self, states):
-        return self.model.predict(states, batch_size=len(states))
+        return self.q1.predict(states, batch_size=len(states))
 
     def fit(self, state, action, reward, next_state, is_done):
-        targets, td_error = self._create_targets(state, action, reward, next_state, is_done)
-        self.model.fit(state, targets, epochs=1, verbose=False, batch_size=len(state), shuffle=False)
+        targets_1, targets_2, td_error = self._create_targets(state, action, reward, next_state, is_done)
+        self.q1.fit(state, targets_1, epochs=1, verbose=False, batch_size=len(state), shuffle=False)
+        self.q2.fit(state, targets_2, epochs=1, verbose=False, batch_size=len(state), shuffle=False)
         return td_error
 
     def save(self, name):
-        self.model.save(f'{name}.h5')
+        self.q1.save(f'{name}.h5')
 
     def load(self, name):
-        self.model = keras.models.load_model(f'{name}.h5')
-        self.target_model = keras.models.load_model(f'{name}.h5')
+        self.q1 = keras.models.load_model(f'{name}.h5')
+        self.q2 = keras.models.load_model(f'{name}.h5')

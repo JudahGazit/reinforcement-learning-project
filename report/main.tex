@@ -167,7 +167,11 @@ The BipdealWalker environment, due to the limited sensors of the robot, is a cha
 The vanilla variant of the BipdealWalker was easy enough to solve in a small number of episodes, even with simpler architectures. Although the original action space is continuous, discretizing in into $\{-1, 0, 1\}^4$ was enough for reaching excellent results. This led me to believe that even the hardcore version could be resolved without changing the architecture into continuous models. After stacking multiple improvements together, that allowed for better exploration and prevent the model from over-estimating states, I was able to nearly-resolve even the hardcore version using the simpler discrete action space -- and I believe a full resolution of the environment would emerge if more episodes were allowed. As the current state-of-the-art models are Actor-Critic approaches, achieving these results using simpler DQN models was refreshing and some-what surprising.
 
 \section{Code}
-The full code can be found here: \href{https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing}{LINK}
+The full code can be found here:
+\href{https://github.com/JudahGazit/reinforcement-learning-project}{GITHUB},
+\href{https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing}{COLAB} 
+
+
 
 \bibliographystyle{apalike}
 \bibliography{ref}

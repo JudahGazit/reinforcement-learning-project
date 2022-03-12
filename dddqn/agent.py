@@ -33,7 +33,7 @@ class Agent:
     :param epsilon_decay: epsilon used in e-greedy policy. Decays every episode until reaching `final_epsilon`
     :param replay_memory_size: size of replay memory to be used
     """
-    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=2, learning_rate=0.00005478,
+    def __init__(self, env, batch_frames, action_step_size=3, copy_to_target_at=5, learning_rate=0.00005478,
                  learn_every=2, initial_steps=5000, batch_size=128, initial_epsilon=1, final_epsilon=0.01,
                  epsilon_decay=0.99, replay_memory_size=1_000_000):
         super().__init__()

@@ -31,7 +31,7 @@ def play_by_model(model, file_name='game.gif'):
 def grade_model(model, trials=100):
     trial_scores = []
     for _ in tqdm(range(trials)):
-        trial_scores.append(np.sum(model.play(2000, render=False)))
+        trial_scores.append(np.sum(model.play(1000, render=False)))
 
     plt.hist(trial_scores, 10)
     plt.setp(plt.gca(), title=f'{model.env_name} - Rewards of {trials} trials')
@@ -42,10 +42,9 @@ if __name__ == '__main__':
     env_name = "BipedalWalkerHardcore-v3"
     env = gym.make(env_name).env
     batch_frames = 2
-    # with tf.device('cpu'):
-    #     model = Agent(env_name, batch_frames).train(3000, 1000)
-    #     model.save('saved_models/hardcore_weights_clip_state')
-    model = Agent(env_name, batch_frames).load('saved_models/hardcore_weights')
+    with tf.device('cpu'):
+        model = Agent(env_name, batch_frames).train(6000, 1000, save_directory='saved_models/train5')
+        model.save('saved_models/hardcore_weights')
     print('Model score', grade_model(model))
     for i in range(10):
         play_by_model(model, f'gifs/game_temp{i+1}.gif')

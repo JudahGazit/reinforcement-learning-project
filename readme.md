@@ -5,7 +5,7 @@ This is my solution for the BipedalWalker and BipedalWalkerHardcore version, usi
 This was done as the final project for Reinforcement Learning course (89-6873, BIU, 2022).
 
 Full report:
-(https://github.com/JudahGazit/reinforcement-learning-project/blob/main/report/report.pdf)
+https://github.com/JudahGazit/reinforcement-learning-project/blob/main/report/report.pdf
 
 Colab notebook:
-(https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing)
+https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing

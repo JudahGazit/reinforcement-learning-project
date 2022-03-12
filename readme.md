@@ -9,3 +9,5 @@ https://github.com/JudahGazit/reinforcement-learning-project/blob/main/report/re
 
 Colab notebook:
 https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing
+or:
+https://github.com/JudahGazit/reinforcement-learning-project/blob/main/Reinforcement_Learning_Project.ipynb

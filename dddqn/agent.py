@@ -62,10 +62,14 @@ class Agent:
                            self.learning_rate, self.action_step_size)
 
     def _make_action_space(self, action_step_size):
+        """
+        Create the action space for the agent.
+        The action space does not contain the "null action" (0, 0, 0, 0)
+        """
         number_of_axes = self.env.action_space.shape[0]
         actions = itertools.product(*[np.linspace(-1, 1, action_step_size) for _ in range(number_of_axes)])
         actions = np.array(list(actions))
-        actions = actions[(np.sum(actions != 0, 1) <= 4) & (np.sum(actions != 0, 1) > 0)]
+        actions = actions[(np.sum(actions != 0, 1) <= action_step_size) & (np.sum(actions != 0, 1) > 0)]
         return actions
 
     def _sample_from_replay(self, stored):

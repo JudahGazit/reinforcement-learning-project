@@ -100,7 +100,8 @@ class Agent:
         next_state, reward, is_done, info = [np.hstack(next_state[:, i]) for i in range(next_state.shape[1])]
         reward_clipped = np.clip(reward.sum(), -10, 1)
         if train:
-            stored = self.remember(state, action, reward_clipped, next_state, is_done.any() and reward_clipped < -5)
+            is_terminal = is_done.any() and reward_clipped < -5
+            stored = self.remember(state, action, reward_clipped, next_state, is_terminal)
             loss = 0
             if step_number > 0 and step_number % self.learn_every == 0:
                 loss = self.learn_over_replay(stored)

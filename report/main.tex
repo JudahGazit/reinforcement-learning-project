@@ -10,6 +10,7 @@
 \usepackage{amsmath}
 \usepackage{graphicx}
 \usepackage[hidelinks]{hyperref}
+\usepackage[font=footnotesize]{caption}
 
 
 \graphicspath{ {./figs/} }
@@ -50,20 +51,20 @@ Here, I use DQN-based methods to resolve the BipedalWalker environment. This env
 Deep Q-Learning Network (DQN) uses neural networks in order to predict the Q values for every possible action, for a given state, i.e., $f: |S| \to \mathbb{R}^{|A|} \, : \, f(s) = (Q(s,a_1), \dots, Q(s,a_{|A|}))$ where $S, A$ denote the possible states and actions of the environment, respectively. 
 Under the hood, DQN consists of multiple neural network layers, and we update their weights according to the accuracy of the predicted Q-values, when compared to actual rewards, in a manner similar to Self-Supervised learning methods \cite{DQN}. 
 
-This process tends to be quite noisy and hard to "tame", and numerous improvements were suggested in recent years. \textbf{Double Deep Q-Learning Network} (DDQN) utilizes two DQN networks -- the first one is used to pick the next action, and the other is used to predict the Q-value of the state and the chosen action \cite{DDQN}. 
+This process tends to be quite noisy and hard to "tame", and numerous improvements were suggested in recent years. \textbf{Double Deep Q-Learning Network} (DDQN) utilizes two DQN networks -- the first one is used for picking the next action, and the other is used for predicting the Q-value of the state and the chosen action \cite{DDQN}. 
 $$Q^*(s_t, a_t) = r_t + \gamma Q_{\theta'}(s_{t+1}, \arg \max_{a'}Q_{\theta}(s_{t+1}, a'))$$
 Where $s_t, a_t, r_t$ are the state, action and reward observed at time $t$, $\theta, \theta'$ are the weights of the DQN and target network, and $\gamma$ is the discount factor.
 Every few episodes, we copy the weights of the first network into the other. DDQN reduces the amount of noise created during training and assists in reaching better results faster, hence it is widely used.
 
 \textbf{Clipped Double Q Learning} is a variant of DDQN, which was originally introduced for Action-Critic methods \cite{ClippedDQN}. Here, two networks are trained simultaneously, using the minimal Q-value they return \cite{ren2021on}. 
-$$Q^*(s_t, a_t) = r_t + \gamma \min_{\{i = 1, 2\}} (Q_{\theta'_i}(s_{t+1}, \arg \max_{a'}Q_{\theta_1}(s_{t+1}, a')))$$
-Where $s_t, a_t, r_t$ are the state, action and reward observed at time $t$, $\theta_{\{1,2\}},  \theta'_{\{1,2\}},$ are the weights of the DQN and target network, and $\gamma$ is the discount factor.
+$$Q^*(s_t, a_t) = r_t + \gamma \min_{\{i = 1, 2\}} \{Q_{\theta'_i}(s_{t+1}, \arg \max_{a'}Q_{\theta_1}(s_{t+1}, a'))\}$$
+Where $s_t, a_t, r_t$ are the state, action and reward observed at time $t$, $\theta_i,  \theta'_i, i\in \{1,2\}$ are the weights of the DQN and target network, and $\gamma$ is the discount factor.
 
 Another known improvement is \textbf{Dueling DQN}, which instead of predicting $Q$ directly, predicts $Q(s,a)=V(s)+A(s,a)$, i.e, the \textit{value} of state $s$ (regardless of the chosen action), and the \textit{advantage} of picking action $a$ \cite{DuelingDQN}. In practice, two parallel dense layers are being added to the network -- one to evaluate $V$ and the other to evaluate $A$, and the combination $Q(s,a)=V(s)+A(s,a) - \frac1{|A|}\sum_{a'\in A}A(s,a')$ is the final result we use for training.
 
-Offline learning methods use Replay Buffer in order to sample historical observations for training \cite{DQN}. As the size of replay buffer increases, the need for making sure the best observations are picked for training emerges. A common practice is to use a Prioritized Experience Replay (PER) \cite{PER}, which uses the error in predicting the Q-value for each state as the weights in picking a sample of them. Another newer approach achieves similar results to PER, but remove the need for the more complex sampling process, by always slightly biasing the samples taken to more recent observations \cite{ExpReplay}.
+Offline learning methods use Replay Buffer in order to sample historical observations for training \cite{DQN}. As the size of replay buffer increases, the need for making sure the best observations are picked for training emerges. A common practice is to use a Prioritized Experience Replay (PER) \cite{PER}, which uses the error in predicting the Q-value for each state as the weights for replay sampling. Another newer approach achieves similar results to PER, but remove the need for the more complex sampling process, by always slightly biasing the samples taken to more recent observations \cite{ExpReplay}.
 
-Stacking multiple solutions together has showed significant improvement in the performance \cite{Rainbow}. Previous works have shown that together these approaches can resolve many complex environments successfully.
+Stacking multiple solutions together has showed significant improvement in the performance, such as the Rainbow architecture \cite{Rainbow}. Previous works have shown that together these approaches can resolve many complex environments successfully.
 
 DQN has some adaptations into continuous action spaces. Normalized Advantage Functions (NEF) adapts the Dueling-DQN model into continuous spaces by changing the advantage component \cite{NEF}.
 It defines the advantage as $A(s,a) = \frac12 (a-\mu(s))^T P(s) (a - \mu(s))$, where $P=L(s)L(s)^T$, $L(s)$ is a state-dependent lower-triangular matrix that we predict and $\mu(s)$ is the next action that we take. $\mu(s) \in A$ is designed to be the action that maximizes the Q-value for the state, $\mu(s) = {\arg \max}_{a\in A} Q(s,a)$. NEF maintains a single-network architecture, unlike Actor-Critic models, which makes it simpler to implement as there are less hyperparameters to optimize.
@@ -96,11 +97,12 @@ This method combines several approaches for minimizing the overestimation of Q-v
 \end{figure*}
 
 \subsubsection{Action Space}
-The action space of the Bipedal Walker contains 4 continues axes: $A=[-1,1]^4$. But since DQN-based learning methods can only cope with discrete action spaces, some kind of discretization must take place beforehand. It is important to note that too many possible actions would require longer training and exploration, hence One needs to decide whether it is more effective to have higher-resolution control over each axis, or to have multiple axes activated at the same time. Eventually I found that preferring axes combination produces better result than having more sensitive control over each individual axes. Moreover, I found that removing the "null action" $(0,0,0,0)$ also improves the results of the model (as the agent is not able to "rest" at any point in time, hence must keep moving).
-The final action space is $\bar{A}=\{-1,0,1\}^4 \setminus \{0\}^4 \subset A$, which has $|\bar{A}|=80$ possible actions.
+The action space of the Bipedal Walker contains 4 continues axes: $A=[-1,1]^4$. But since DQN-based learning methods can only cope with discrete action spaces, some kind of discretization must take place beforehand. It is important to note that too many possible actions would require longer training and exploration, hence One needs to decide whether it is more effective to have higher-resolution control over each axis, or to have multiple axes activated at the same time. Eventually I found that preferring axes combination produces better result than having more sensitive control over each individual axes. Moreover, I found that removing the "null action" $(0,0,0,0)$ also improves the results of the model -- as the robot is not able to "rest" at any point in time, hence must keep moving.
+The final action space is 
+$$\bar{A}=\{-1,0,1\}^4 \setminus \{0\}^4 \subset A$$ which has $|\bar{A}|=80$ possible actions.
 
 \subsubsection{State Preprocessing}
-The observation-space of the Bipedal Walker environment is limited to several sensors the robot contains, mainly sensors that capture limited information about the environment and velocities of several components. In order to compensate about the lack of acceleration metrics, I combined $k$ consecutive frames into a single state. After picking an action $a$, it is applied $k$ times in order to create the next state. After several trials, I decided using $k=2$, which makes each state a vector of $48$ elements. 
+The observation space of the Bipedal Walker environment is limited to several sensors the robot contains, mainly sensors that capture limited information about the environment and velocities of several components. In order to compensate about the lack of acceleration metrics, I combined $k$ consecutive frames into a single state. After picking an action $a$, it is applied $k$ times in order to create the next state. After several trials, I decided using $k=2$, which makes each state a vector of $48$ elements. 
 In order to speed up training, I found it unnecessary to train after each state - especially when using large batch size and long episodes. Instead, training is only done every other state.
 
 Since some of the features aren't explicitly bounded, I found it necessary to normalize them all to consistent scales. I used the standard normalization, $\bar{x}_i = \frac{x_i - \hat{\mu}_i}{\hat{\sigma}_i}$, where $x_i$ is the $i$-th feature, and $\hat{\mu}_i, \hat{\sigma}_i$ are the observed mean and standard deviation, which are being updated during the initial random exploration before training. This normalization helps in preventing the gradients from exploding as the agent approached undiscovered territory.
@@ -111,14 +113,14 @@ In the BipedalWalker environment, the reward for each action varies - most of th
 \subsubsection{Experience Replay Buffer}
 Experience Replay Buffer is an important component for off-line learning algorithms. It stores the last previous $N$ tuples of states, action taken, rewards, and following states, denoted $(s_t, a_t, r_t, s_{t+1})$. Here, I created a buffer of the last $N=1{\small ,}000{\small ,}000$ tuples, in order to learn over long-forgotten experiences. 
 
-Large replay buffers, although help in creating a long-term memory, suffer from different problems -- the current policy is hardly ever challenged directly since the odds of picking recent experiences is low. A common improvement is to use Prioritized Experience Replay buffers (PER) \cite{PER}, which are designed to pick experiences with higher prediction errors. Here, I use a newer approach that achieved similar results \cite{ExpReplay} -- Instead of picking a random batch of $B$ tuples from the replay buffer, $B-1$ random tuples are sampled and combined with the last observed tuple. This creates $B$ tuples for the network to train over, which are slightly biased toward the most recent state it reached.
+Large replay buffers, although helpful in creating a long-term memory, suffer from different problems -- the current policy is hardly ever challenged directly since the odds of picking recent experiences is low. A common improvement is to use Prioritized Experience Replay buffers (PER) \cite{PER}, which is designed to pick experiences with higher prediction errors. Here, I use a newer approach that achieved similar results \cite{ExpReplay} -- Instead of picking a random batch of $B$ tuples from the replay buffer, $B-1$ random tuples are sampled and combined with the last observed tuple. This creates $B$ tuples for the network to train over, which are slightly biased toward the most recent state it reached.
 
 \subsubsection{Loss Function and Optimizer}
 Non-stationary learning tasks, such as reinforcement learning, might not benefit from momentum-based optimizers, since the target is not fixed throughout the training, hence making the momentum misleading. I find that using RMSProp, which does not contain any momentum component, helps in stabilizing the results faster. I also used gradient clipping to avoid drastic changes in the weights of the network. The loss function used is the standard Mean Squared Error (MSE).
 
 \subsubsection{Biased $\epsilon$-Greedy}
-Discrete reinforcement learning algorithms have hard time in utilizing large action spaces. $\epsilon$-greedy makes exploration rarer over time, which makes it harder to detect better strategies. Here, actions are sampled unevenly, biased toward less explored actions. Let $p_i$ be the relative frequency of $a_i \in A$ in replay buffer $\mathfrak{D}$, $p_i = \frac{|\{d \in \mathfrak{D}\ :\ a_i \in d \}|}{|\mathfrak{D}|}$.
-Let $\hat{p}_i = \frac{1 - p_i}{\sum_i 1 - p_i}$, whenever a random action needs to be picked according to the $\epsilon$-greedy policy, I sample actions according to $\mathbb{P}(a_t = a_i) = \hat{p}_i$.
+Discrete reinforcement learning algorithms have a hard time in utilizing large action spaces. $\epsilon$-greedy makes exploration rarer over time, which makes it harder to detect better strategies. Here, actions are sampled unevenly, biased toward less explored actions. Let $p_c$ be the relative frequency of $c \in A$ in replay buffer $\mathfrak{D}$, $p_c = \frac{|\{d \in \mathfrak{D}\ :\ c \in d \}|}{|\mathfrak{D}|}$.
+Let $\hat{p}_c = \frac{1 - p_c}{\sum_c 1 - p_c}$, whenever a random action needs to be picked according to the $\epsilon$-greedy policy, I sample actions according to $\mathbb{P}(a_t = c) = \hat{p}_c$.
 
 \subsubsection{BipdealWalker as Non-Episodial Task}
 The BipdealWalker environment has a finite track the robot must run through. However, there are no apparent features that define the end of that track, according to the robot's sensors. Theoretically, the track could have been endless, and the robot could run forever. 
@@ -130,7 +132,7 @@ Therefore, the only terminal state in training is when the robot touches the gro
 
 \subsubsection{Hyperparameters Optimization}
 Hyperparameters were optimized using Optuna, which was tasked to find the right learning rate for achieving the highest average reward in the last $10$ episodes. The batch size was fixed to $128$, and the discount factor $\gamma$ was set to $0.99$.
-The balance between exploration and exploitation was achieved by selecting actions using the $\varepsilon$-greedy strategy, where the initial value of $\varepsilon$ was $1$, and it decayed after each episode $t$ by $\varepsilon_{t+1} = \max\{0.99\varepsilon_t, 0.01\}$.
+The balance between exploration and exploitation was achieved by selecting actions using the $\varepsilon$-greedy strategy, where the initial value of $\varepsilon$ was $1$, and it decayed after each episode $t$ by $\varepsilon_{t+1} = \max\{0.99\varepsilon_t, 0.01\}$. The target networks are being updated every $\tau = 5$ episodes, and the learning rate is $5.478 \cdot 10^{-5}$.
 
 \subsubsection{Solving BipdealWalker-Hardcore}
 The hardcore variant of the BipdealWalker environment adds obstacles to the track, which demands to robot to change its reaction according to its limited sensors. Eventually, the same model architecture was used for both the vanilla and the hardcore versions, but many of the architecture features derived from trying to resolve the hardcore environment.
@@ -141,14 +143,31 @@ First, I tried to decrease the size of the action space by reframing the problem
 Next, I tried to learn over the original continuous action space. I examined Normalized Advantage Functions (NEF) that adapts the Dueling-DQN model into continuous spaces, but unlike methods such as Actor-Critic, it maintains a simpler single-network architecture \cite{NEF}. 
 This method has reached the track's end successfully and consistently, but failed to learn how to balance the robot's "head" and therefore suffered from large penalties from the environment, saturating in an average score of $\sim 270$.
 
-Finally, after adding the introducing the improved action exploration, terminal state definition and Clipped-DQN architecture, I was able to nearly-resolve the hardcore version using the discrete action space used for the vanilla variant.
+Finally, after adding the introducing the improved action exploration, terminal state definition and Clipped-DQN architecture, I was able to nearly-resolve the hardcore version (average score $\sim 293$) using the discrete action space used for the vanilla variant.
 
 \subsection{Experimental Results}
 \label{section:results}
- The model was trained using batch size of 128 observations. Every 10 episodes, the model was evaluated by playing 20 consecutive games, i.e., only with greedy policy. Training was stopped after the evaluation achieved an average score of 300.
+ The model was trained using batch size of 128 observations. Every 10 episodes, the model was evaluated by playing 20 consecutive games, i.e., only with a greedy policy. Training was stopped after the evaluation achieved an average score of 300.
  
  The vanilla environment was resolved after 320 episodes, and the hardcore environment was nearly-resolved after 2900 episodes -- reaching $293.476$ average score (Figure \ref{fig:scores}).
  
+
+ 
+\section{Discussion}
+The BipdealWalker environment, due to the limited sensors of the robot, is a challenging reinforcement learning task to overcome. Here, using only discrete action spaces, I was able to solve the vanilla version, and nearly-resolve the hardcore variant of the environment. Using a collection of different approaches, the final model was powerful enough to learn and generalize from experiences in both scenarios.
+
+The vanilla variant of the BipdealWalker was easy enough to solve in a small number of episodes, even with simpler architectures. Although the original action space is continuous, discretizing in into $\{-1, 0, 1\}^4$ was enough for reaching excellent results. This led me to believe that even the hardcore version could be resolved without changing the architecture into continuous models. After stacking multiple improvements together, that allowed for better exploration and prevent the model from over-estimating states, I was able to nearly-resolve even the hardcore version using the simpler discrete action space -- and I believe a full resolution of the environment would emerge if more episodes were allowed. As the current state-of-the-art models are the Actor-Critic approaches, achieving these results using simpler DQN models was refreshing and some-what surprising.
+
+\section{Code}
+The full code can be found here:
+\href{https://github.com/JudahGazit/reinforcement-learning-project}{GITHUB}, or here:
+\href{https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing}{COLAB} 
+
+
+
+\bibliographystyle{apalike}
+\bibliography{ref}
+
  \begin{figure*}
  \includegraphics[width=\textwidth]{scores}
  \caption{
@@ -160,21 +179,6 @@ Finally, after adding the introducing the improved action exploration, terminal 
  \textbf{(D)} Similarly to (B), the histogram of total rewards of 100 evaluation games for the hardcore version. The mean total reward is above $293.476$, which means the model has nearly-resolved this environment.
  }
  \end{figure*}
- 
-\section{Discussion}
-The BipdealWalker environment, due to the limited sensors of the robot, is a challenging reinforcement learning task to overcome. Here, using only discrete action spaces, I was able to solve both the vanilla, and nearly-resolve the hardcore variants of the environment. Using a collection of different approaches, the final model was powerful enough to learn and generalize from experiences.
-
-The vanilla variant of the BipdealWalker was easy enough to solve in a small number of episodes, even with simpler architectures. Although the original action space is continuous, discretizing in into $\{-1, 0, 1\}^4$ was enough for reaching excellent results. This led me to believe that even the hardcore version could be resolved without changing the architecture into continuous models. After stacking multiple improvements together, that allowed for better exploration and prevent the model from over-estimating states, I was able to nearly-resolve even the hardcore version using the simpler discrete action space -- and I believe a full resolution of the environment would emerge if more episodes were allowed. As the current state-of-the-art models are Actor-Critic approaches, achieving these results using simpler DQN models was refreshing and some-what surprising.
-
-\section{Code}
-The full code can be found here:
-\href{https://github.com/JudahGazit/reinforcement-learning-project}{GITHUB},
-\href{https://colab.research.google.com/drive/1_gxpvbnFv3lCQh4Ce_f1osPcGhwog27W?usp=sharing}{COLAB} 
-
-
-
-\bibliographystyle{apalike}
-\bibliography{ref}
 
 \end{multicols}
 
